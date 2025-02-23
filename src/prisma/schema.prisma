@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource postgresql {
+  provider = "postgresql"
+  url      = env("POSTGRESQL_URL")
+}
+
+model User {
+  id      Int     @id @default(autoincrement())
+  name    String
+  number  String 
+  chats   Chat[]  // Relaciona os chats com o usuário @relation("UserChats")
+}
+
+model Attendent {
+  id      Int     @id @default(autoincrement())
+  name    String
+  ticket  String?
+  chats   Chat[]  // Relaciona os chats com o atendente
+}
+
+model Chat {
+  id          Int       @id @default(autoincrement())
+  message     String
+  userId      Int?
+  attendentId Int?
+  
+  user        User?     @relation(fields: [userId], references: [id])  // Relacionamento com o User
+  attendent   Attendent? @relation(fields: [attendentId], references: [id])  // Relacionamento com o Attendent
+}
+
+model ChatHistory {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  message   String
+  createdAt DateTime @default(now())
+
+}
