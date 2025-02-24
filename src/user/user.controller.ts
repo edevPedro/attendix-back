@@ -11,8 +11,8 @@ export class UserController {
   }
 
   @Post()
-  async createUser(@Body() data: { name: string; photo?: string; ticket?: string; number: string}) {
-    return this.userService.createUser(data);
+  async createUser(@Body() data: { name: string; photo?: string; ticket?: string; number: string, chats: { connect: { id: string }[] }}) {
+    return this.userService.createOrGetUser(data);
   }
 
   @Get(':id')

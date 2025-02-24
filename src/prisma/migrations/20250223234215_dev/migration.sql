@@ -22,18 +22,10 @@ CREATE TABLE "Chat" (
     "message" TEXT NOT NULL,
     "userId" INTEGER,
     "attendentId" INTEGER,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "Chat_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "ChatHistory" (
-    "id" SERIAL NOT NULL,
-    "userId" INTEGER NOT NULL,
-    "message" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "ChatHistory_pkey" PRIMARY KEY ("id")
 );
 
 -- AddForeignKey
