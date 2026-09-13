@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Attendix Gateway</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --line: #2c3a4f;
+      --text: #e8eef7;
+      --muted: #8ea0b8;
+      --accent: #5b8def;
+      --ok: #3dd68c;
+      --warn: #f0b429;
+      --bad: #f07178;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 { font-size: 18px; margin: 0; }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #121a24;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button.ghost { background: transparent; border: 1px solid var(--line); }
+    button.danger { background: var(--bad); }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tabs button { background: #121a24; }
+    .tabs button.active { background: var(--accent); }
+    .muted { color: var(--muted); font-size: 13px; }
+    .ok { color: var(--ok); }
+    .bad { color: var(--bad); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+    .hidden { display: none; }
+    #qr { max-width: 240px; background: #fff; padding: 8px; border-radius: 8px; }
+    .msg { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+    .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #121a24; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Attendix · WhatsApp ↔ Discord</h1>
+    <div class="row">
+      <span id="who" class="muted"></span>
+      <button class="ghost" id="logoutBtn" type="button">Sair</button>
+    </div>
+  </header>
+  <main>
+    <section id="loginView" class="card">
+      <h2>Login admin</h2>
+      <p class="muted">Nenhum chat é capturado até você habilitar um a um.</p>
+      <label>Usuário</label>
+      <input id="user" autocomplete="username" />
+      <label>Senha</label>
+      <input id="pass" type="password" autocomplete="current-password" />
+      <button type="button" id="loginBtn">Entrar</button>
+      <p id="loginErr" class="bad"></p>
+    </section>
+
+    <section id="appView" class="hidden">
+      <div class="tabs">
+        <button data-tab="conn" class="active">Conexão</button>
+        <button data-tab="chats">Chats</button>
+        <button data-tab="lists">Listas</button>
+        <button data-tab="inbox">Inbox</button>
+      </div>
+
+      <div id="tab-conn">
+        <div class="card">
+          <h3>WhatsApp</h3>
+          <p>Status: <strong id="waStatus">—</strong></p>
+          <img id="qr" class="hidden" alt="QR WhatsApp" />
+          <div class="row">
+            <input id="pairPhone" placeholder="DDI+número para pairing (ex 5511999999999)" />
+            <button type="button" id="pairBtn">Gerar pairing code</button>
+          </div>
+          <p id="pairCode" class="ok"></p>
+        </div>
+        <div class="card">
+          <h3>Discord</h3>
+          <p id="dcStatus" class="muted">—</p>
+        </div>
+      </div>
+
+      <div id="tab-chats" class="hidden">
+        <div class="card">
+          <p class="muted">Catálogo só com metadados. Captura começa em <strong>0</strong>. Ligue o toggle para criar canal no Discord e gravar mensagens.</p>
+          <input id="chatFilter" placeholder="Filtrar por nome ou jid" />
+          <table>
+            <thead>
+              <tr><th>Chat</th><th>Tipo</th><th>Captura</th><th>Canal Discord</th><th>Áudio TTS</th></tr>
+            </thead>
+            <tbody id="chatRows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="tab-lists" class="hidden">
+        <div class="card">
+          <h3>Nova lista / união de canais</h3>
+          <label>Nome</label>
+          <input id="listName" />
+          <label>JIDs (um por linha)</label>
+          <textarea id="listJids" rows="4" style="width:100%;background:#121a24;color:var(--text);border:1px solid var(--line);border-radius:8px"></textarea>
+          <label class="row"><input type="checkbox" id="listTts" style="width:auto" /> Enviar texto Discord como áudio</label>
+          <button type="button" id="createListBtn">Criar lista e canal</button>
+        </div>
+        <div class="card" id="listsWrap"></div>
+      </div>
+
+      <div id="tab-inbox" class="hidden">
+        <div class="card">
+          <label>JID habilitado</label>
+          <select id="inboxJid"></select>
+          <button type="button" id="loadInbox">Carregar</button>
+          <div id="inboxMsgs"></div>
+          <div class="row" style="margin-top:12px">
+            <input id="replyText" placeholder="Responder neste chat" />
+            <button type="button" id="replyBtn">Enviar</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+        ...opts,
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+      if (!res.ok) throw new Error(data?.message || data?.error || res.statusText);
+      return data;
+    }
+
+    function showApp(on) {
+      $('loginView').classList.toggle('hidden', on);
+      $('appView').classList.toggle('hidden', !on);
+      $('logoutBtn').classList.toggle('hidden', !on);
+    }
+
+    document.querySelectorAll('.tabs button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        ['conn', 'chats', 'lists', 'inbox'].forEach((id) => {
+          $('tab-' + id).classList.toggle('hidden', btn.dataset.tab !== id);
+        });
+      });
+    });
+
+    $('loginBtn').onclick = async () => {
+      $('loginErr').textContent = '';
+      try {
+        await api('/admin/login', {
+          method: 'POST',
+          body: JSON.stringify({ username: $('user').value, password: $('pass').value }),
+        });
+        await boot();
+      } catch (e) {
+        $('loginErr').textContent = e.message;
+      }
+    };
+
+    $('logoutBtn').onclick = async () => {
+      await api('/admin/logout', { method: 'POST' });
+      showApp(false);
+    };
+
+    async function boot() {
+      const session = await api('/admin/session');
+      $('who').textContent = session.user || 'admin';
+      showApp(true);
+      await refreshStatus();
+      await refreshChats();
+      await refreshLists();
+    }
+
+    async function refreshStatus() {
+      const wa = await api('/admin/whatsapp/status');
+      $('waStatus').textContent = wa.connection || '—';
+      if (wa.qrDataUrl) {
+        $('qr').src = wa.qrDataUrl;
+        $('qr').classList.remove('hidden');
+      } else {
+        $('qr').classList.add('hidden');
+      }
+      const dc = await api('/admin/discord/status');
+      $('dcStatus').textContent = dc.configured
+        ? (dc.ready ? 'Conectado ' + (dc.user || '') : 'Token ok, conectando…')
+        : 'DISCORD_TOKEN não configurado';
+    }
+
+    $('pairBtn').onclick = async () => {
+      const data = await api('/admin/whatsapp/pair', {
+        method: 'POST',
+        body: JSON.stringify({ phoneNumber: $('pairPhone').value }),
+      });
+      $('pairCode').textContent = 'Código: ' + data.code;
+    };
+
+    let catalog = [];
+    async function refreshChats() {
+      catalog = await api('/admin/chats/catalog');
+      renderChats();
+      const sel = $('inboxJid');
+      sel.innerHTML = catalog.filter((c) => c.enabled).map((c) =>
+        `<option value="${c.jid}">${c.name} (${c.jid})</option>`
+      ).join('');
+    }
+
+    function renderChats() {
+      const q = ($('chatFilter').value || '').toLowerCase();
+      $('chatRows').innerHTML = catalog.filter((c) =>
+        (c.name + c.jid).toLowerCase().includes(q)
+      ).map((c) => `
+        <tr>
+          <td>${c.name}<div class="muted">${c.jid}</div></td>
+          <td><span class="pill">${c.kind}</span></td>
+          <td><input type="checkbox" data-jid="${c.jid}" class="enable" ${c.enabled ? 'checked' : ''} /></td>
+          <td class="muted">${c.discordChannelId || '—'}</td>
+          <td><input type="checkbox" data-jid="${c.jid}" class="tts" ${c.sendAsAudio ? 'checked' : ''} /></td>
+        </tr>
+      `).join('');
+      document.querySelectorAll('.enable').forEach((el) => {
+        el.onchange = () => patchChat(el.dataset.jid, { enabled: el.checked });
+      });
+      document.querySelectorAll('.tts').forEach((el) => {
+        el.onchange = () => patchChat(el.dataset.jid, { sendAsAudio: el.checked });
+      });
+    }
+
+    $('chatFilter').oninput = renderChats;
+
+    async function patchChat(jid, body) {
+      await api('/admin/chats/' + encodeURIComponent(jid), {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      await refreshChats();
+    }
+
+    async function refreshLists() {
+      const lists = await api('/admin/broadcasts');
+      $('listsWrap').innerHTML = lists.map((l) => `
+        <div class="card">
+          <strong>${l.name}</strong>
+          <div class="muted">canal ${l.discordChannelId}</div>
+          <p>${(l.members || []).map((m) => m.jid).join('<br>') || 'sem membros'}</p>
+        </div>
+      `).join('') || '<p class="muted">Nenhuma lista</p>';
+    }
+
+    $('createListBtn').onclick = async () => {
+      const jids = $('listJids').value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+      await api('/admin/broadcasts', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: $('listName').value,
+          jids,
+          sendAsAudio: $('listTts').checked,
+        }),
+      });
+      $('listName').value = '';
+      $('listJids').value = '';
+      await refreshLists();
+      await refreshChats();
+    };
+
+    $('loadInbox').onclick = async () => {
+      const jid = $('inboxJid').value;
+      if (!jid) return;
+      const msgs = await api('/admin/inbox/' + encodeURIComponent(jid));
+      $('inboxMsgs').innerHTML = msgs.map((m) => `
+        <div class="msg">
+          <span class="pill">${m.direction}</span>
+          <span class="pill">${m.type}</span>
+          <div>${m.body || ''}</div>
+          ${m.transcript ? `<div class="muted">${m.transcript}</div>` : ''}
+          ${m.mediaPath ? `<a href="/admin/media/${encodeURIComponent(m.mediaPath.split(/[/\\\\]/).pop())}">mídia</a>` : ''}
+        </div>
+      `).join('') || '<p class="muted">Sem mensagens (chat habilitado recentemente)</p>';
+    };
+
+    $('replyBtn').onclick = async () => {
+      const jid = $('inboxJid').value;
+      const message = $('replyText').value;
+      if (!jid || !message) return;
+      await api('/admin/inbox/' + encodeURIComponent(jid) + '/reply', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+      $('replyText').value = '';
+      $('loadInbox').click();
+    };
+
+    api('/admin/session').then(boot).catch(() => showApp(false));
+    setInterval(() => {
+      if (!$('appView').classList.contains('hidden')) refreshStatus().catch(() => {});
+    }, 4000);
+  </script>
+</body>
+</html>

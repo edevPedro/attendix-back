@@ -5,11 +5,30 @@ import { PrismaModule } from './prisma/prisma.module';
 import { UserModule } from './user/user.module';
 import { AttendentModule } from './attendent/attendent.module';
 import { ChatModule } from './chat/chat.module';
-import {ConfigModule} from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
+import { CaptureModule } from './capture/capture.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
+import { DiscordModule } from './discord/discord.module';
+import { SpeechModule } from './speech/speech.module';
+import { BridgeModule } from './bridge/bridge.module';
+import { AuthModule } from './auth/auth.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
-  imports: [PrismaModule, AttendentModule, UserModule, ChatModule, ConfigModule.forRoot()], 
-
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    AuthModule,
+    CaptureModule,
+    WhatsappModule,
+    DiscordModule,
+    SpeechModule,
+    BridgeModule,
+    AdminModule,
+    AttendentModule,
+    UserModule,
+    ChatModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

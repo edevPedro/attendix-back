@@ -1,7 +1,9 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { AttendentService } from './attendent.service';
+import { AdminGuard } from 'src/auth/admin.guard';
 
 @Controller('attendents')
+@UseGuards(AdminGuard)
 export class AttendentController {
   constructor(private readonly attendentService: AttendentService) {}
 
@@ -12,7 +14,7 @@ export class AttendentController {
 
   @Post()
   async createAttendent(@Body() data: { name: string; photo?: string; ticket?: string }) {
-    return this.attendentService.createAttendent(data);
+    return this.attendentService.createAttendent({ name: data.name, ticket: data.ticket });
   }
 
   @Get(':id')

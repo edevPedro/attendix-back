@@ -1,0 +1,186 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { CaptureService } from 'src/capture/capture.service';
+import { DiscordService } from 'src/discord/discord.service';
+import { WhatsappService } from 'src/whatsapp/whatsapp.service';
+import { BridgeService } from 'src/bridge/bridge.service';
+import { chatKind, normalizeJid } from 'src/whatsapp/jid';
+
+@Injectable()
+export class AdminService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly capture: CaptureService,
+    private readonly discord: DiscordService,
+    private readonly whatsapp: WhatsappService,
+    private readonly bridge: BridgeService,
+  ) {}
+
+  whatsappStatus() {
+    return this.whatsapp.status;
+  }
+
+  discordStatus() {
+    return this.discord.status();
+  }
+
+  async pair(phoneNumber: string) {
+    if (!phoneNumber) {
+      throw new BadRequestException('phoneNumber é obrigatório');
+    }
+    const code = await this.whatsapp.requestPairingCode(phoneNumber);
+    return { code };
+  }
+
+  catalog() {
+    return this.capture.listCatalog();
+  }
+
+  async patchChat(
+    jidRaw: string,
+    body: {
+      enabled?: boolean;
+      discordChannelId?: string | null;
+      broadcastListId?: number | null;
+      sendAsAudio?: boolean;
+      name?: string;
+    },
+  ) {
+    const jid = normalizeJid(jidRaw);
+    const catalog = await this.prisma.chatCatalog.findUnique({ where: { jid } });
+    const existing = await this.prisma.allowedChat.findUnique({ where: { jid } });
+    const name = body.name || catalog?.name || existing?.name || jid;
+    const kind = catalog?.kind || existing?.kind || chatKind(jid);
+    const enabled = body.enabled ?? existing?.enabled ?? false;
+
+    let discordChannelId =
+      body.discordChannelId === undefined ? existing?.discordChannelId ?? null : body.discordChannelId;
+
+    if (body.broadcastListId) {
+      const list = await this.prisma.broadcastList.findUnique({
+        where: { id: body.broadcastListId },
+      });
+      if (!list) {
+        throw new NotFoundException('Lista de transmissão não encontrada');
+      }
+      discordChannelId = list.discordChannelId;
+      await this.prisma.broadcastMember.upsert({
+        where: { listId_jid: { listId: list.id, jid } },
+        create: { listId: list.id, jid },
+        update: {},
+      });
+    }
+
+    if (enabled && !discordChannelId && this.discord.ready) {
+      discordChannelId = await this.discord.createChatChannel(name, jid);
+    }
+
+    return this.capture.setAllowed({
+      jid,
+      name,
+      kind,
+      enabled,
+      discordChannelId,
+      sendAsAudio: body.sendAsAudio,
+    });
+  }
+
+  async createBroadcast(body: { name: string; jids?: string[]; sendAsAudio?: boolean }) {
+    if (!body.name?.trim()) {
+      throw new BadRequestException('name é obrigatório');
+    }
+    if (!this.discord.ready) {
+      throw new BadRequestException('Discord precisa estar conectado para criar o canal da lista');
+    }
+    const channelId = await this.discord.createChatChannel(body.name, `list-${Date.now()}`);
+    const list = await this.prisma.broadcastList.create({
+      data: {
+        name: body.name.trim(),
+        discordChannelId: channelId,
+        sendAsAudio: body.sendAsAudio ?? false,
+      },
+    });
+    for (const raw of body.jids || []) {
+      await this.addBroadcastMember(list.id, raw);
+    }
+    return this.getBroadcast(list.id);
+  }
+
+  async addBroadcastMember(listId: number, jidRaw: string) {
+    const list = await this.prisma.broadcastList.findUnique({ where: { id: listId } });
+    if (!list) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+    const jid = normalizeJid(jidRaw);
+    const catalog = await this.prisma.chatCatalog.findUnique({ where: { jid } });
+    await this.prisma.broadcastMember.upsert({
+      where: { listId_jid: { listId, jid } },
+      create: { listId, jid },
+      update: {},
+    });
+    await this.capture.setAllowed({
+      jid,
+      name: catalog?.name || jid,
+      kind: catalog?.kind || chatKind(jid),
+      enabled: true,
+      discordChannelId: list.discordChannelId,
+    });
+    return this.getBroadcast(listId);
+  }
+
+  async removeBroadcastMember(listId: number, jidRaw: string) {
+    const jid = normalizeJid(jidRaw);
+    await this.prisma.broadcastMember.deleteMany({ where: { listId, jid } });
+    await this.capture.setAllowed({
+      jid,
+      name: jid,
+      kind: chatKind(jid),
+      enabled: false,
+      discordChannelId: null,
+    });
+    return this.getBroadcast(listId);
+  }
+
+  async listBroadcasts() {
+    return this.prisma.broadcastList.findMany({
+      include: { members: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getBroadcast(id: number) {
+    const list = await this.prisma.broadcastList.findUnique({
+      where: { id },
+      include: { members: true },
+    });
+    if (!list) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+    return list;
+  }
+
+  async inbox(jidRaw: string) {
+    const jid = normalizeJid(jidRaw);
+    if (!this.capture.isAllowed(jid)) {
+      throw new ForbiddenException('Chat não habilitado para captura');
+    }
+    return this.prisma.message.findMany({
+      where: { jid },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+    });
+  }
+
+  async reply(jidRaw: string, message: string) {
+    if (!message.trim()) {
+      throw new BadRequestException('message é obrigatório');
+    }
+    await this.bridge.sendFromFront({ to: jidRaw, message });
+    return { ok: true };
+  }
+}
