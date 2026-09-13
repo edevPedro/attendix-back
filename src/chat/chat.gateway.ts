@@ -1,12 +1,11 @@
-import { WebSocketGateway, WebSocketServer, SubscribeMessage, MessageBody } from '@nestjs/websockets';
+import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter } from 'events';
 
+/** Realtime opcional. Envio/recebimento autenticado passa pelo REST /admin. */
 @WebSocketGateway(3301, {
-  cors: {
-    origin: '*',
-  },
+  cors: { origin: false },
 })
 @Injectable()
 export class ChatGateway extends EventEmitter {
@@ -20,15 +19,10 @@ export class ChatGateway extends EventEmitter {
   }
 
   afterInit() {
-    this.logger.log('WebSocket gateway em ws://localhost:3301');
+    this.logger.log('WebSocket interno em ws://localhost:3301 (sem ingestão)');
   }
 
-  emitToFront(data: unknown) {
-    this.server?.emit('messageFromWhatsApp', data);
-  }
-
-  @SubscribeMessage('messageFromFront')
-  handleMessageFromFront(@MessageBody() data: { to: string; message?: string }) {
-    this.emit('fromFront', data);
+  emitToFront(_data: unknown) {
+    /* Não espalhar mensagens do WhatsApp numa porta aberta. Use GET /admin/inbox. */
   }
 }

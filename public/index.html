@@ -190,12 +190,14 @@
       }[c]));
     }
 
-    $('user').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
-    $('pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
+    function showApp(on) {
       $('loginView').classList.toggle('hidden', on);
       $('appView').classList.toggle('hidden', !on);
       $('logoutBtn').classList.toggle('hidden', !on);
     }
+
+    $('user').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
+    $('pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
 
     document.querySelectorAll('.tabs button').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -360,11 +362,11 @@
       const msgs = await api('/admin/inbox/' + encodeURIComponent(jid));
       $('inboxMsgs').innerHTML = msgs.map((m) => `
         <div class="msg">
-          <span class="pill">${m.direction}</span>
-          <span class="pill">${m.type}</span>
-          <div>${m.body || ''}</div>
-          ${m.transcript ? `<div class="muted">${m.transcript}</div>` : ''}
-          ${m.mediaPath ? `<a href="/admin/media/${encodeURIComponent(m.mediaPath.split(/[/\\\\]/).pop())}">mídia</a>` : ''}
+          <span class="pill">${esc(m.direction)}</span>
+          <span class="pill">${esc(m.type)}</span>
+          <div>${esc(m.body || '')}</div>
+          ${m.transcript ? `<div class="muted">${esc(m.transcript)}</div>` : ''}
+          ${m.mediaPath ? `<a href="/admin/media/${encodeURIComponent(String(m.mediaPath).split(/[/\\\\]/).pop())}">mídia</a>` : ''}
         </div>
       `).join('') || '<p class="muted">Sem mensagens (chat habilitado recentemente)</p>';
     };

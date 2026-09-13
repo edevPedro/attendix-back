@@ -29,9 +29,6 @@ export class BridgeService implements OnModuleInit {
     this.discord.on('inbound', (msg: DiscordInbound) => {
       this.fromDiscord(msg).catch((err) => this.logger.error(err));
     });
-    this.chatGateway.on('fromFront', (data: { to: string; message?: string }) => {
-      this.sendFromFront(data).catch((err) => this.logger.warn(String(err)));
-    });
   }
 
   async fromWhatsApp(msg: WaInbound) {
