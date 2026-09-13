@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { chatKind, normalizeJid } from 'src/whatsapp/jid';
-import { isCaptureEnabled } from './capture.policy';
+import { ChannelBinding, isCaptureEnabled, resolveFanoutJids, routedChannelId } from './capture.policy';
 
 @Injectable()
 export class CaptureService {
@@ -16,7 +16,7 @@ export class CaptureService {
 
   async refresh() {
     try {
-      const rows = await this.prisma.allowedChat.findMany({
+      const rows = await this.prisma.waChat.findMany({
         where: { enabled: true },
         select: { jid: true },
       });
@@ -39,117 +39,115 @@ export class CaptureService {
 
   async upsertCatalog(jidRaw: string, name?: string | null) {
     const jid = normalizeJid(jidRaw);
-    if (!jid) {
-      return;
-    }
     const kind = chatKind(jid);
-    if (kind === 'other') {
-      return;
-    }
-    const display = name?.trim() || jid;
-    await this.prisma.chatCatalog.upsert({
+    if (!jid || kind === 'other') return;
+    const label = name?.trim();
+    await this.prisma.waChat.upsert({
       where: { jid },
-      create: { jid, name: display === jid ? jid : display, kind, lastSeen: new Date() },
+      create: { jid, name: label || jid, kind, enabled: false, lastSeen: new Date() },
       update: {
         lastSeen: new Date(),
-        ...(name?.trim() && name.trim() !== jid ? { name: name.trim(), kind } : { kind }),
+        kind,
+        ...(label && label !== jid ? { name: label } : {}),
       },
     });
   }
 
   async listCatalog() {
-    const [catalog, allowed] = await Promise.all([
-      this.prisma.chatCatalog.findMany({ orderBy: { lastSeen: 'desc' } }),
-      this.prisma.allowedChat.findMany(),
-    ]);
-    const byJid = new Map(allowed.map((row) => [row.jid, row]));
-    const rows = catalog.map((chat) => {
-      const allow = byJid.get(chat.jid);
-      return {
+    const chats = await this.prisma.waChat.findMany({
+      include: { list: true },
+      orderBy: { lastSeen: 'desc' },
+    });
+    return chats.map((chat) => ({
+      jid: chat.jid,
+      name: chat.name,
+      kind: chat.kind,
+      lastSeen: chat.lastSeen,
+      enabled: chat.enabled,
+      discordChannelId: routedChannelId({
         jid: chat.jid,
-        name: allow?.name || chat.name,
-        kind: chat.kind,
-        lastSeen: chat.lastSeen,
-        enabled: allow?.enabled === true,
-        discordChannelId: allow?.discordChannelId ?? null,
-        sendAsAudio: allow?.sendAsAudio === true,
-      };
-    });
-    for (const allow of allowed) {
-      if (rows.some((row) => row.jid === allow.jid)) continue;
-      rows.unshift({
-        jid: allow.jid,
-        name: allow.name,
-        kind: allow.kind,
-        lastSeen: allow.updatedAt,
-        enabled: allow.enabled,
-        discordChannelId: allow.discordChannelId ?? null,
-        sendAsAudio: allow.sendAsAudio,
-      });
-    }
-    return rows;
+        enabled: chat.enabled,
+        discordChannelId: chat.discordChannelId,
+        listChannelId: chat.list?.discordChannelId ?? null,
+      }),
+      sendAsAudio: chat.list ? chat.list.sendAsAudio : chat.sendAsAudio,
+      listId: chat.listId,
+      listName: chat.list?.name ?? null,
+    }));
   }
 
-  async listBindings() {
-    return this.prisma.allowedChat.findMany({
+  async bindings(): Promise<ChannelBinding[]> {
+    const chats = await this.prisma.waChat.findMany({
       where: { enabled: true },
+      include: { list: true },
     });
+    return chats.map((chat) => ({
+      jid: chat.jid,
+      enabled: chat.enabled,
+      discordChannelId: chat.discordChannelId,
+      listChannelId: chat.list?.discordChannelId ?? null,
+    }));
   }
 
-  async getAllowed(jidRaw: string) {
-    return this.prisma.allowedChat.findUnique({
+  async jidsForChannel(channelId: string): Promise<string[]> {
+    return resolveFanoutJids(channelId, await this.bindings());
+  }
+
+  async getChat(jidRaw: string) {
+    return this.prisma.waChat.findUnique({
       where: { jid: normalizeJid(jidRaw) },
+      include: { list: true },
     });
   }
 
-  async setAllowed(input: {
+  async saveChat(input: {
     jid: string;
-    name: string;
-    kind: string;
-    enabled: boolean;
+    name?: string;
+    kind?: string;
+    enabled?: boolean;
     discordChannelId?: string | null;
     sendAsAudio?: boolean;
+    listId?: number | null;
   }) {
     const jid = normalizeJid(input.jid);
-    const row = await this.prisma.allowedChat.upsert({
+    const kind = input.kind || chatKind(jid);
+    const name = input.name?.trim() || jid;
+    const listId = input.listId === undefined ? undefined : input.listId;
+    const discordChannelId =
+      listId ? null : input.discordChannelId === undefined ? undefined : input.discordChannelId;
+
+    const row = await this.prisma.waChat.upsert({
       where: { jid },
       create: {
         jid,
-        name: input.name,
-        kind: input.kind,
-        enabled: input.enabled,
-        discordChannelId: input.discordChannelId ?? null,
+        name,
+        kind,
+        enabled: input.enabled ?? false,
+        discordChannelId: listId ? null : (input.discordChannelId ?? null),
         sendAsAudio: input.sendAsAudio ?? false,
+        listId: listId ?? null,
+        lastSeen: new Date(),
       },
       update: {
-        name: input.name,
-        kind: input.kind,
+        name: input.name === undefined ? undefined : name,
+        kind: input.kind === undefined ? undefined : kind,
         enabled: input.enabled,
-        discordChannelId: input.discordChannelId ?? null,
-        sendAsAudio: input.sendAsAudio ?? undefined,
+        discordChannelId,
+        sendAsAudio: input.sendAsAudio,
+        listId,
       },
     });
     await this.refresh();
-    return row;
-  }
-
-  async jidsForDiscordChannel(channelId: string): Promise<string[]> {
-    const rows = await this.prisma.allowedChat.findMany({
-      where: { enabled: true, discordChannelId: channelId },
-      select: { jid: true },
-    });
-    return rows.map((row) => row.jid);
+    return this.getChat(jid);
   }
 
   async sendAsAudioForChannel(channelId: string): Promise<boolean> {
     const list = await this.prisma.broadcastList.findUnique({
       where: { discordChannelId: channelId },
     });
-    if (list) {
-      return list.sendAsAudio;
-    }
-    const chats = await this.prisma.allowedChat.findMany({
-      where: { enabled: true, discordChannelId: channelId },
+    if (list) return list.sendAsAudio;
+    const chats = await this.prisma.waChat.findMany({
+      where: { enabled: true, discordChannelId: channelId, listId: null },
     });
     return chats.length === 1 ? chats[0].sendAsAudio : false;
   }

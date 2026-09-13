@@ -35,6 +35,8 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
   private sock: any = null;
   private connecting: Promise<void> | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private socketGen = 0;
+  private shuttingDown = false;
   private groupCache = new Map<string, any>();
   status: {
     connection: string;
@@ -60,11 +62,15 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
   }
 
   async onModuleDestroy() {
+    this.shuttingDown = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.socketGen += 1;
     await this.dropSocket();
   }
 
   async connect(): Promise<void> {
+    if (this.shuttingDown) return;
     if (this.connecting) {
       return this.connecting;
     }
@@ -91,7 +97,7 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
   }
 
   private scheduleReconnect(ms: number) {
-    if (this.reconnectTimer) return;
+    if (this.shuttingDown || this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect().catch((err) => this.logger.error(err));
@@ -99,12 +105,14 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
   }
 
   private async openSocket() {
+    const gen = ++this.socketGen;
     this.baileys = await loadBaileys();
     const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = this.baileys;
     await this.dropSocket();
+    if (gen !== this.socketGen || this.shuttingDown) return;
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-    this.sock = makeWASocket({
+    const sock = makeWASocket({
       auth: state,
       markOnlineOnConnect: false,
       syncFullHistory: false,
@@ -115,10 +123,11 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
       getMessage: async (key: any) => this.messages.protoForRetry(key),
       cachedGroupMetadata: async (jid: string) => this.groupCache.get(jid),
     });
+    this.sock = sock;
 
-    this.sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', saveCreds);
 
-    this.sock.ev.on('groups.update', (updates: any[]) => {
+    sock.ev.on('groups.update', (updates: any[]) => {
       for (const update of updates || []) {
         if (update?.id) {
           this.groupCache.set(update.id, { ...(this.groupCache.get(update.id) || {}), ...update });
@@ -126,13 +135,14 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
       }
     });
 
-    this.sock.ev.on('groups.upsert', (groups: any[]) => {
+    sock.ev.on('groups.upsert', (groups: any[]) => {
       for (const group of groups || []) {
         if (group?.id) this.groupCache.set(group.id, group);
       }
     });
 
-    this.sock.ev.on('connection.update', async (update: any) => {
+    sock.ev.on('connection.update', async (update: any) => {
+      if (gen !== this.socketGen || this.sock !== sock) return;
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         this.status.qr = qr;
@@ -145,9 +155,13 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
       }
       if (connection) this.status.connection = connection;
       if (connection === 'open') {
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
         this.status.qr = null;
         this.status.qrDataUrl = null;
-        this.status.me = this.sock.user;
+        this.status.me = sock.user;
         this.logger.log(`WhatsApp conectado`);
       }
       if (connection === 'close') {
@@ -155,7 +169,8 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
         const loggedOut = code === DisconnectReason.loggedOut;
         this.status.me = null;
         this.logger.warn(`WhatsApp fechou (code=${code})`);
-        await this.dropSocket();
+        if (this.sock === sock) await this.dropSocket();
+        if (gen !== this.socketGen) return;
         if (loggedOut) {
           await rm(AUTH_DIR, { recursive: true, force: true }).catch(() => undefined);
         }
@@ -163,7 +178,7 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
       }
     });
 
-    this.sock.ev.on('contacts.upsert', (contacts: any[]) => {
+    sock.ev.on('contacts.upsert', (contacts: any[]) => {
       void this.indexChats(
         (contacts || []).map((c) => ({
           jid: c.id || c.jid,
@@ -172,16 +187,17 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
       );
     });
 
-    this.sock.ev.on('chats.upsert', (chats: any[]) => {
+    sock.ev.on('chats.upsert', (chats: any[]) => {
       void this.indexChats((chats || []).map((c) => ({ jid: c.id, name: c.name || c.subject })));
     });
 
-    this.sock.ev.on('messaging-history.set', (event: any) => {
+    sock.ev.on('messaging-history.set', (event: any) => {
       const chats = event?.chats || [];
       void this.indexChats(chats.map((c: any) => ({ jid: c.id, name: c.name || c.subject })));
     });
 
-    this.sock.ev.on('messages.upsert', async (event: { messages?: any[]; type?: string }) => {
+    sock.ev.on('messages.upsert', async (event: { messages?: any[]; type?: string }) => {
+      if (gen !== this.socketGen || this.sock !== sock) return;
       if (isHistoryUpsert(event.type) || event.type === 'append') return;
       if (event.type && event.type !== 'notify') return;
       for (const m of event.messages || []) {
@@ -214,13 +230,15 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
     const type = extractType(m.message);
     const text = extractText(m.message);
     if (type === 'unknown' && !text) return;
+    const id = waMessageId(m.key);
+    if (!id) return;
 
     const inbound: WaInbound = {
       jid: remote,
       participant: m.key?.participant ? normalizeJid(m.key.participant) : undefined,
       name: m.pushName,
       fromMe: Boolean(m.key?.fromMe),
-      waMessageId: waMessageId(m.key),
+      waMessageId: id,
       timestamp: Number(m.messageTimestamp || Date.now() / 1000),
       type,
       text,
@@ -233,7 +251,7 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
           m,
           'buffer',
           {},
-          { reuploadRequest: this.sock.updateMediaMessage, logger: undefined },
+          { reuploadRequest: this.sock?.updateMediaMessage, logger: undefined },
         );
         const mime =
           inner?.imageMessage?.mimetype ||

@@ -1,4 +1,4 @@
-import { extractText, extractType, unwrapMessage, isHistoryUpsert, waMessageId } from './message-extract';
+import { extractText, extractType, unwrapMessage, isHistoryUpsert, waMessageId, outboundProto } from './message-extract';
 
 describe('message-extract', () => {
   it('reads legacy conversation and extended text', () => {
@@ -32,5 +32,11 @@ describe('message-extract', () => {
     expect(
       waMessageId({ remoteJid: '5511999:12@s.whatsapp.net', id: 'abc', participant: '5511888:1@s.whatsapp.net' }),
     ).toBe('5511999@s.whatsapp.net_5511888@s.whatsapp.net_abc');
+  });
+
+  it('stores a retryable outbound proto', () => {
+    expect(outboundProto('text', 'oi')).toEqual({ conversation: 'oi' });
+    expect(outboundProto('image', 'foto')).toEqual({ imageMessage: { caption: 'foto' } });
+    expect(outboundProto('audio', '')).toEqual({ audioMessage: { ptt: true } });
   });
 });

@@ -59,11 +59,6 @@ export class AdminService {
     if (chatKind(jid) === 'other') {
       throw new BadRequestException('JID inválido. Use número@s.whatsapp.net ou grupo@g.us');
     }
-    await this.prisma.chatCatalog.upsert({
-      where: { jid },
-      create: { jid, name: body.name?.trim() || jid, kind: chatKind(jid) },
-      update: { name: body.name?.trim() || undefined },
-    });
     return this.patchChat(jid, {
       enabled: body.enabled ?? false,
       name: body.name,
@@ -86,39 +81,40 @@ export class AdminService {
     },
   ) {
     const jid = normalizeJid(jidRaw);
-    const catalog = await this.prisma.chatCatalog.findUnique({ where: { jid } });
-    const existing = await this.prisma.allowedChat.findUnique({ where: { jid } });
-    const name = body.name || catalog?.name || existing?.name || jid;
-    const kind = catalog?.kind || existing?.kind || chatKind(jid);
+    const existing = await this.capture.getChat(jid);
+    const name = body.name?.trim() || existing?.name || jid;
+    const kind = existing?.kind || chatKind(jid);
     const enabled = body.enabled ?? existing?.enabled ?? false;
+    const listId =
+      body.broadcastListId === undefined ? existing?.listId ?? null : body.broadcastListId;
+
+    if (listId) {
+      const list = await this.prisma.broadcastList.findUnique({ where: { id: listId } });
+      if (!list) throw new NotFoundException('Lista de transmissão não encontrada');
+      return this.capture.saveChat({
+        jid,
+        name,
+        kind,
+        enabled,
+        listId,
+        discordChannelId: null,
+        sendAsAudio: body.sendAsAudio,
+      });
+    }
 
     let discordChannelId =
       body.discordChannelId === undefined ? existing?.discordChannelId ?? null : body.discordChannelId;
-
-    if (body.broadcastListId) {
-      const list = await this.prisma.broadcastList.findUnique({
-        where: { id: body.broadcastListId },
-      });
-      if (!list) {
-        throw new NotFoundException('Lista de transmissão não encontrada');
-      }
-      discordChannelId = list.discordChannelId;
-      await this.prisma.broadcastMember.upsert({
-        where: { listId_jid: { listId: list.id, jid } },
-        create: { listId: list.id, jid },
-        update: {},
-      });
-    }
 
     if (enabled && !discordChannelId && this.discord.ready) {
       discordChannelId = await this.discord.createChatChannel(name, jid);
     }
 
-    return this.capture.setAllowed({
+    return this.capture.saveChat({
       jid,
       name,
       kind,
       enabled,
+      listId: null,
       discordChannelId,
       sendAsAudio: body.sendAsAudio,
     });
@@ -147,57 +143,39 @@ export class AdminService {
 
   async addBroadcastMember(listId: number, jidRaw: string) {
     const list = await this.prisma.broadcastList.findUnique({ where: { id: listId } });
-    if (!list) {
-      throw new NotFoundException('Lista não encontrada');
-    }
+    if (!list) throw new NotFoundException('Lista não encontrada');
     const jid = normalizeJid(jidRaw);
-    const catalog = await this.prisma.chatCatalog.findUnique({ where: { jid } });
-    await this.prisma.broadcastMember.upsert({
-      where: { listId_jid: { listId, jid } },
-      create: { listId, jid },
-      update: {},
-    });
-    await this.capture.setAllowed({
+    if (chatKind(jid) === 'other') {
+      throw new BadRequestException('JID inválido');
+    }
+    const existing = await this.capture.getChat(jid);
+    await this.capture.saveChat({
       jid,
-      name: catalog?.name || jid,
-      kind: catalog?.kind || chatKind(jid),
+      name: existing?.name || jid,
+      kind: existing?.kind || chatKind(jid),
       enabled: true,
-      discordChannelId: list.discordChannelId,
+      listId,
+      discordChannelId: null,
     });
     return this.getBroadcast(listId);
   }
 
   async removeBroadcastMember(listId: number, jidRaw: string) {
     const jid = normalizeJid(jidRaw);
-    const list = await this.prisma.broadcastList.findUnique({ where: { id: listId } });
-    await this.prisma.broadcastMember.deleteMany({ where: { listId, jid } });
-    const remaining = await this.prisma.broadcastMember.findMany({ where: { jid } });
-    const current = await this.capture.getAllowed(jid);
-    if (current) {
-      let nextChannel: string | null = current.discordChannelId;
-      if (remaining.length > 0) {
-        const other = await this.prisma.broadcastList.findUnique({ where: { id: remaining[0].listId } });
-        nextChannel = other?.discordChannelId ?? null;
-      } else if (list && current.discordChannelId === list.discordChannelId) {
-        nextChannel = null;
-      }
-      if (nextChannel !== current.discordChannelId) {
-        await this.capture.setAllowed({
-          jid,
-          name: current.name,
-          kind: current.kind,
-          enabled: current.enabled,
-          discordChannelId: nextChannel,
-          sendAsAudio: current.sendAsAudio,
-        });
-      }
+    const current = await this.capture.getChat(jid);
+    if (current?.listId === listId) {
+      await this.capture.saveChat({
+        jid,
+        listId: null,
+        discordChannelId: null,
+      });
     }
     return this.getBroadcast(listId);
   }
 
-  async listBroadcasts() {
+  listBroadcasts() {
     return this.prisma.broadcastList.findMany({
-      include: { members: true },
+      include: { chats: true },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -205,11 +183,9 @@ export class AdminService {
   async getBroadcast(id: number) {
     const list = await this.prisma.broadcastList.findUnique({
       where: { id },
-      include: { members: true },
+      include: { chats: true },
     });
-    if (!list) {
-      throw new NotFoundException('Lista não encontrada');
-    }
+    if (!list) throw new NotFoundException('Lista não encontrada');
     return list;
   }
 

@@ -1,4 +1,4 @@
-import { isCaptureEnabled, resolveFanoutJids, inboundPrefix } from './capture.policy';
+import { isCaptureEnabled, resolveFanoutJids, inboundPrefix, routedChannelId } from './capture.policy';
 
 describe('capture.policy', () => {
   it('starts with zero captures', () => {
@@ -12,14 +12,27 @@ describe('capture.policy', () => {
     expect(isCaptureEnabled(set, '5512@s.whatsapp.net')).toBe(false);
   });
 
-  it('resolves fan-out members of a discord channel', () => {
-    const jids = resolveFanoutJids('c1', [
-      { discordChannelId: 'c1', jid: 'a', enabled: true },
-      { discordChannelId: 'c1', jid: 'b', enabled: true },
-      { discordChannelId: 'c2', jid: 'c', enabled: true },
-      { discordChannelId: 'c1', jid: 'd', enabled: false },
-    ]);
-    expect(jids).toEqual(['a', 'b']);
+  it('prefers list channel over 1:1 when routing inbound', () => {
+    expect(
+      routedChannelId({
+        jid: 'a',
+        enabled: true,
+        discordChannelId: 'dm',
+        listChannelId: 'list',
+      }),
+    ).toBe('list');
+  });
+
+  it('resolves fan-out from the list channel first', () => {
+    const bindings = [
+      { discordChannelId: 'c1', listChannelId: 'list', jid: 'a', enabled: true },
+      { discordChannelId: 'c1', listChannelId: 'list', jid: 'b', enabled: true },
+      { discordChannelId: 'c2', listChannelId: null, jid: 'c', enabled: true },
+      { discordChannelId: 'c1', listChannelId: null, jid: 'd', enabled: false },
+    ];
+    expect(resolveFanoutJids('list', bindings)).toEqual(['a', 'b']);
+    expect(resolveFanoutJids('c2', bindings)).toEqual(['c']);
+    expect(resolveFanoutJids('c1', bindings)).toEqual([]);
   });
 
   it('prefixes inbound only when several jids share a channel', () => {

@@ -3,10 +3,10 @@ import { CaptureService } from 'src/capture/capture.service';
 import { DiscordService, DiscordInbound } from 'src/discord/discord.service';
 import { WhatsappService, WaInbound } from 'src/whatsapp/whatsapp.service';
 import { SpeechService } from 'src/speech/speech.service';
-import { inboundPrefix, resolveFanoutJids } from 'src/capture/capture.policy';
+import { inboundPrefix, resolveFanoutJids, routedChannelId } from 'src/capture/capture.policy';
 import { extFromMime, saveMedia } from 'src/common/media-store';
 import { normalizeJid } from 'src/whatsapp/jid';
-import { waMessageId } from 'src/whatsapp/message-extract';
+import { outboundProto, waMessageId } from 'src/whatsapp/message-extract';
 import { MessageStore } from 'src/gateway/message-store';
 
 type OutFile = { buffer: Buffer; name: string; mime?: string; mediaPath?: string };
@@ -34,17 +34,28 @@ export class BridgeService implements OnModuleInit {
 
   async fromWhatsApp(msg: WaInbound) {
     if (!this.capture.isAllowed(msg.jid)) return;
-    if (msg.waMessageId && (await this.messages.findByWaId(msg.waMessageId))) {
-      return;
+    if (msg.waMessageId && (await this.messages.findByWaId(msg.waMessageId))) return;
+
+    const chat = await this.capture.getChat(msg.jid);
+    if (!chat?.enabled) return;
+
+    const binding = {
+      jid: chat.jid,
+      enabled: chat.enabled,
+      discordChannelId: chat.discordChannelId,
+      listChannelId: chat.list?.discordChannelId ?? null,
+    };
+    let channelId = routedChannelId(binding);
+    if (!channelId && !chat.listId && this.discord.ready) {
+      channelId = await this.discord.createChatChannel(chat.name || msg.name || msg.jid, msg.jid);
+      await this.capture.saveChat({ jid: msg.jid, discordChannelId: channelId });
     }
 
-    const allowed = await this.capture.getAllowed(msg.jid);
-    const display = msg.name || allowed?.name || msg.jid;
-    const bindings = await this.capture.listBindings();
-    const sameChannel = resolveFanoutJids(allowed?.discordChannelId || '', bindings);
+    const display = msg.name || chat.name || msg.jid;
+    const sameChannel = resolveFanoutJids(channelId || '', await this.capture.bindings());
     const prefix = inboundPrefix(sameChannel.length, display);
 
-    const saved = await this.messages.record({
+    await this.messages.record({
       jid: msg.jid,
       direction: msg.fromMe ? 'out' : 'in',
       type: msg.type,
@@ -53,9 +64,6 @@ export class BridgeService implements OnModuleInit {
       waMessageId: msg.waMessageId || undefined,
       rawJson: msg.raw ?? undefined,
     });
-    if (saved.discordMessageId) {
-      return;
-    }
 
     let transcript: string | null = null;
     if (msg.type === 'audio' && msg.mediaPath) {
@@ -67,20 +75,20 @@ export class BridgeService implements OnModuleInit {
       .join('\n');
 
     let discordMessageId: string | null = null;
-    if (allowed?.discordChannelId) {
+    if (channelId) {
       discordMessageId = await this.discord.postInbound({
-        channelId: allowed.discordChannelId,
+        channelId,
         body,
         files: msg.mediaPath ? [msg.mediaPath] : undefined,
       });
     }
 
-    if (saved.waMessageId) {
+    if (msg.waMessageId) {
       await this.messages.record({
-        jid: saved.jid,
-        direction: saved.direction,
-        type: saved.type,
-        waMessageId: saved.waMessageId,
+        jid: msg.jid,
+        direction: msg.fromMe ? 'out' : 'in',
+        type: msg.type,
+        waMessageId: msg.waMessageId,
         transcript,
         discordMessageId,
         body: msg.text || transcript,
@@ -91,8 +99,9 @@ export class BridgeService implements OnModuleInit {
   }
 
   async fromDiscord(msg: DiscordInbound) {
-    const bindings = await this.capture.listBindings();
-    const jids = resolveFanoutJids(msg.channelId, bindings);
+    if (await this.messages.findByDiscordId(msg.messageId)) return;
+
+    const jids = await this.capture.jidsForChannel(msg.channelId);
     if (!jids.length) return;
 
     const sendAsAudio =
@@ -102,8 +111,8 @@ export class BridgeService implements OnModuleInit {
 
     const files: OutFile[] = [];
     for (const att of msg.attachments) {
-      const res = await fetch(att.url);
-      const buf = Buffer.from(await res.arrayBuffer());
+      const buf = await this.discord.fetchAttachment(att.url);
+      if (!buf) continue;
       const mime = att.contentType || undefined;
       const mediaPath = await saveMedia(buf, extFromMime(mime, att.name.split('.').pop() || 'bin'));
       files.push({ buffer: buf, name: att.name, mime, mediaPath });
@@ -180,6 +189,7 @@ export class BridgeService implements OnModuleInit {
       discordMessageId,
       mediaPath,
       waMessageId: sent?.key ? waMessageId(sent.key) || undefined : undefined,
+      rawJson: outboundProto(type, body || ''),
     });
   }
 }

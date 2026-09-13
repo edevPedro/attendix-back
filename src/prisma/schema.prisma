@@ -7,71 +7,29 @@ datasource postgresql {
   url      = env("POSTGRESQL_URL")
 }
 
-model User {
-  id     Int     @id @default(autoincrement())
-  name   String
-  number String  @unique
-  chats  Chat[]
-}
-
-model Attendent {
-  id     Int     @id @default(autoincrement())
-  name   String
-  ticket String?
-  chats  Chat[]
-}
-
-model Chat {
-  id          Int       @id @default(autoincrement())
-  message     Json      @default("[]")
-  userId      Int?
-  attendentId Int?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  user        User?     @relation(fields: [userId], references: [id])
-  attendent   Attendent? @relation(fields: [attendentId], references: [id])
-}
-
-model ChatCatalog {
-  id        Int      @id @default(autoincrement())
-  jid       String   @unique
-  name      String
-  kind      String
-  lastSeen  DateTime @default(now())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model AllowedChat {
-  id               Int      @id @default(autoincrement())
-  jid              String   @unique
+model WaChat {
+  id               Int             @id @default(autoincrement())
+  jid              String          @unique
   name             String
   kind             String
-  enabled          Boolean  @default(false)
+  enabled          Boolean         @default(false)
   discordChannelId String?
-  sendAsAudio      Boolean  @default(false)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  sendAsAudio      Boolean         @default(false)
+  lastSeen         DateTime        @default(now())
+  listId           Int?
+  list             BroadcastList?  @relation(fields: [listId], references: [id], onDelete: SetNull)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 }
 
 model BroadcastList {
-  id               Int               @id @default(autoincrement())
+  id               Int      @id @default(autoincrement())
   name             String
-  discordChannelId String            @unique
-  sendAsAudio      Boolean           @default(false)
-  members          BroadcastMember[]
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-}
-
-model BroadcastMember {
-  id     Int           @id @default(autoincrement())
-  listId Int
-  jid    String
-  list   BroadcastList @relation(fields: [listId], references: [id], onDelete: Cascade)
-
-  @@unique([listId, jid])
-  @@index([jid])
+  discordChannelId String   @unique
+  sendAsAudio      Boolean  @default(false)
+  chats            WaChat[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model Message {
@@ -88,5 +46,14 @@ model Message {
   createdAt        DateTime @default(now())
 
   @@index([jid, createdAt])
+  @@index([discordMessageId])
   @@map("gateway_messages")
+}
+
+model AdminSession {
+  token     String   @id
+  username  String
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }

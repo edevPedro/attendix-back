@@ -286,7 +286,7 @@
           <td>${esc(c.name)}<div class="muted">${esc(c.jid)}</div></td>
           <td><span class="pill">${esc(c.kind)}</span></td>
           <td><input type="checkbox" data-jid="${esc(c.jid)}" class="enable" ${c.enabled ? 'checked' : ''} /></td>
-          <td class="muted">${esc(c.discordChannelId || '—')}</td>
+          <td class="muted">${esc(c.listName ? 'lista: ' + c.listName : (c.discordChannelId || '—'))}</td>
           <td><input type="checkbox" data-jid="${esc(c.jid)}" class="tts" ${c.sendAsAudio ? 'checked' : ''} /></td>
         </tr>
       `).join('');
@@ -335,7 +335,7 @@
         <div class="card">
           <strong>${esc(l.name)}</strong>
           <div class="muted">canal ${esc(l.discordChannelId)}</div>
-          <p>${(l.members || []).map((m) => esc(m.jid)).join('<br>') || 'sem membros'}</p>
+          <p>${(l.chats || []).map((m) => esc(m.name ? m.name + ' · ' + m.jid : m.jid)).join('<br>') || 'sem membros'}</p>
         </div>
       `).join('') || '<p class="muted">Nenhuma lista</p>';
     }

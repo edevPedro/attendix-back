@@ -9,14 +9,14 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(200)
-  login(
+  async login(
     @Body() body: { username?: string; password?: string },
     @Res({ passthrough: true }) res: Response,
   ) {
     if (!this.auth.credentialsOk(body.username || '', body.password || '')) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
-    const token = this.auth.issueSession();
+    const token = await this.auth.issueSession();
     res.cookie(ADMIN_COOKIE, token, {
       httpOnly: true,
       sameSite: 'lax',
@@ -28,8 +28,8 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(200)
-  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    this.auth.revoke(req.cookies?.[ADMIN_COOKIE]);
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await this.auth.revoke(req.cookies?.[ADMIN_COOKIE]);
     res.clearCookie(ADMIN_COOKIE);
     return { ok: true };
   }

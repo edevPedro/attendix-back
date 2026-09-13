@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter } from 'events';
 import {
@@ -13,6 +13,9 @@ import { createReadStream } from 'fs';
 import { basename } from 'path';
 import { sanitizeChannelName } from 'src/whatsapp/jid';
 
+const ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
+const ATTACHMENT_TIMEOUT_MS = 20_000;
+
 export type DiscordInbound = {
   channelId: string;
   messageId: string;
@@ -21,7 +24,7 @@ export type DiscordInbound = {
 };
 
 @Injectable()
-export class DiscordService extends EventEmitter implements OnModuleInit {
+export class DiscordService extends EventEmitter implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DiscordService.name);
   private client: Client | null = null;
   ready = false;
@@ -56,13 +59,12 @@ export class DiscordService extends EventEmitter implements OnModuleInit {
       this.ready = true;
       this.logger.log(`Discord conectado como ${this.client?.user?.tag}`);
     });
+    this.client.on(Events.ShardDisconnect, () => {
+      this.ready = false;
+    });
     this.client.on(Events.MessageCreate, async (message) => {
-      if (!message.guild || message.author.bot) {
-        return;
-      }
-      if (this.client?.user && message.author.id === this.client.user.id) {
-        return;
-      }
+      if (!message.guild || message.author.bot) return;
+      if (this.client?.user && message.author.id === this.client.user.id) return;
       const inbound: DiscordInbound = {
         channelId: message.channelId,
         messageId: message.id,
@@ -78,7 +80,16 @@ export class DiscordService extends EventEmitter implements OnModuleInit {
     try {
       await this.client.login(token);
     } catch (err) {
+      this.ready = false;
       this.logger.error('Falha ao autenticar no Discord', err as Error);
+    }
+  }
+
+  async onModuleDestroy() {
+    this.ready = false;
+    if (this.client) {
+      await this.client.destroy().catch(() => undefined);
+      this.client = null;
     }
   }
 
@@ -112,6 +123,25 @@ export class DiscordService extends EventEmitter implements OnModuleInit {
     return sent.id;
   }
 
+  async fetchAttachment(url: string, maxBytes = ATTACHMENT_MAX_BYTES): Promise<Buffer | null> {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ATTACHMENT_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { signal: ac.signal });
+      if (!res.ok) return null;
+      const len = Number(res.headers.get('content-length') || 0);
+      if (len > maxBytes) return null;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) return null;
+      return buf;
+    } catch (err) {
+      this.logger.warn(`Anexo Discord falhou: ${(err as Error).message}`);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async getTextChannel(id: string): Promise<TextChannel | null> {
     if (!this.client || !this.ready) return null;
     const ch = await this.client.channels.fetch(id).catch(() => null);
@@ -127,7 +157,6 @@ export class DiscordService extends EventEmitter implements OnModuleInit {
     if (!guildId) {
       throw new Error('DISCORD_GUILD_ID não configurado');
     }
-    const guild = await this.client.guilds.fetch(guildId);
-    return guild;
+    return this.client.guilds.fetch(guildId);
   }
 }

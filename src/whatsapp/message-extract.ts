@@ -71,3 +71,14 @@ export function waMessageId(key: WaKey): string {
   }
   return [normalizeJid(key.remoteJid), normalizeJid(key.participant || '') || '', key.id].join('_');
 }
+
+/** Minimal proto so Baileys getMessage can retry after a reconnect. */
+export function outboundProto(
+  type: string,
+  body: string,
+): Record<string, unknown> {
+  if (type === 'image') return { imageMessage: { caption: body } };
+  if (type === 'audio') return { audioMessage: { ptt: true } };
+  if (type === 'file') return { documentMessage: { caption: body } };
+  return { conversation: body };
+}

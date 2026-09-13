@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 
@@ -13,49 +14,57 @@ export function hashesMatch(a: string, b: string): boolean {
 }
 
 @Injectable()
-export class AuthService {
-  private readonly sessions = new Map<string, { user: string; exp: number }>();
+export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  onModuleInit() {
+    if (!this.config.get('ADMIN_PASSWORD')) {
+      this.logger.error('ADMIN_PASSWORD é obrigatório');
+    }
+  }
 
   adminUser(): string {
     return this.config.get<string>('ADMIN_USER') || 'admin';
   }
 
-  adminPassword(): string {
-    const pass = this.config.get<string>('ADMIN_PASSWORD');
-    if (!pass) {
-      throw new Error('ADMIN_PASSWORD is required');
-    }
-    return pass;
-  }
-
   credentialsOk(username: string, password: string): boolean {
-    try {
-      return hashesMatch(username, this.adminUser()) && hashesMatch(password, this.adminPassword());
-    } catch {
-      return false;
-    }
+    const pass = this.config.get<string>('ADMIN_PASSWORD');
+    if (!pass) return false;
+    return hashesMatch(username, this.adminUser()) && hashesMatch(password, pass);
   }
 
-  issueSession(): string {
+  async issueSession(): Promise<string> {
+    await this.prisma.adminSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });
     const token = randomBytes(32).toString('hex');
-    this.sessions.set(token, { user: this.adminUser(), exp: Date.now() + WEEK_MS });
+    await this.prisma.adminSession.create({
+      data: {
+        token,
+        username: this.adminUser(),
+        expiresAt: new Date(Date.now() + WEEK_MS),
+      },
+    });
     return token;
   }
 
-  sessionUser(token?: string | null): string | null {
+  async sessionUser(token?: string | null): Promise<string | null> {
     if (!token) return null;
-    const row = this.sessions.get(token);
+    const row = await this.prisma.adminSession.findUnique({ where: { token } });
     if (!row) return null;
-    if (row.exp < Date.now()) {
-      this.sessions.delete(token);
+    if (row.expiresAt.getTime() < Date.now()) {
+      await this.prisma.adminSession.delete({ where: { token } }).catch(() => undefined);
       return null;
     }
-    return row.user;
+    return row.username;
   }
 
-  revoke(token?: string | null) {
-    if (token) this.sessions.delete(token);
+  async revoke(token?: string | null) {
+    if (token) {
+      await this.prisma.adminSession.delete({ where: { token } }).catch(() => undefined);
+    }
   }
 }

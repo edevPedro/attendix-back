@@ -12,6 +12,11 @@ export class MessageStore {
     return this.prisma.message.findUnique({ where: { waMessageId: id } });
   }
 
+  async findByDiscordId(id: string) {
+    if (!id) return null;
+    return this.prisma.message.findFirst({ where: { discordMessageId: id } });
+  }
+
   async protoForRetry(key: WaKey): Promise<Record<string, unknown> | { conversation: string }> {
     const stored = await this.findByWaId(waMessageId(key));
     if (stored?.rawJson && typeof stored.rawJson === 'object' && !Array.isArray(stored.rawJson)) {
@@ -29,6 +34,7 @@ export class MessageStore {
           discordMessageId: data.discordMessageId ?? undefined,
           transcript: data.transcript ?? undefined,
           mediaPath: data.mediaPath ?? undefined,
+          body: data.body ?? undefined,
           rawJson: data.rawJson ?? undefined,
         },
       });

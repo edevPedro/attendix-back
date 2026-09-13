@@ -7,11 +7,11 @@ export const ADMIN_COOKIE = 'attendix_admin';
 export class AdminGuard implements CanActivate {
   constructor(private readonly auth: AuthService) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const cookie = req.cookies?.[ADMIN_COOKIE];
     const header = String(req.headers?.authorization || '').replace(/^Bearer\s+/i, '');
-    const user = this.auth.sessionUser(cookie || header || null);
+    const user = await this.auth.sessionUser(cookie || header || null);
     if (!user) {
       throw new UnauthorizedException('Admin authentication required');
     }

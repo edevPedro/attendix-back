@@ -4,26 +4,37 @@ import { ConfigModule } from '@nestjs/config';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { AuthModule } from './auth.module';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 describe('admin auth http', () => {
   let app: INestApplication;
+  const sessions = new Map<string, { token: string; username: string; expiresAt: Date }>();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
         ConfigModule.forRoot({
           isGlobal: true,
-          load: [
-            () => ({
-              ADMIN_USER: 'admin',
-              ADMIN_PASSWORD: 'pw',
-              ADMIN_SECRET: 's3cret',
-            }),
-          ],
+          load: [() => ({ ADMIN_USER: 'admin', ADMIN_PASSWORD: 'pw' })],
         }),
         AuthModule,
       ],
-    }).compile();
+    })
+      .overrideProvider(PrismaService)
+      .useValue({
+        adminSession: {
+          deleteMany: async () => undefined,
+          create: async ({ data }: { data: { token: string; username: string; expiresAt: Date } }) => {
+            sessions.set(data.token, data);
+            return data;
+          },
+          findUnique: async ({ where }: { where: { token: string } }) => sessions.get(where.token) ?? null,
+          delete: async ({ where }: { where: { token: string } }) => {
+            sessions.delete(where.token);
+          },
+        },
+      })
+      .compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
     await app.init();
