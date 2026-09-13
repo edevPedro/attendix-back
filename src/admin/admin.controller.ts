@@ -16,6 +16,11 @@ import { AdminService } from './admin.service';
 export class AdminController {
   constructor(private readonly admin: AdminService) {}
 
+  @Get('ready')
+  ready() {
+    return this.admin.ready();
+  }
+
   @Get('whatsapp/status')
   whatsappStatus() {
     return this.admin.whatsappStatus();
@@ -34,6 +39,13 @@ export class AdminController {
   @Get('chats/catalog')
   catalog() {
     return this.admin.catalog();
+  }
+
+  @Post('chats')
+  addChat(
+    @Body() body: { jid: string; name?: string; enabled?: boolean; sendAsAudio?: boolean },
+  ) {
+    return this.admin.addChat(body);
   }
 
   @Patch('chats/:jid')

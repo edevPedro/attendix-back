@@ -122,7 +122,13 @@
 
       <div id="tab-chats" class="hidden">
         <div class="card">
-          <p class="muted">Catálogo só com metadados. Captura começa em <strong>0</strong>. Ligue o toggle para criar canal no Discord e gravar mensagens.</p>
+          <p class="muted">Catálogo só com metadados. Captura começa em <strong>0</strong>. Ligue o toggle para gravar e (se o Discord estiver online) criar canal.</p>
+          <div class="row">
+            <input id="newJid" placeholder="jid (5511999999999@s.whatsapp.net ou 120...@g.us)" />
+            <input id="newName" placeholder="nome (opcional)" style="max-width:220px" />
+            <button type="button" id="addChatBtn">Adicionar à lista</button>
+          </div>
+          <p id="chatErr" class="bad"></p>
           <input id="chatFilter" placeholder="Filtrar por nome ou jid" />
           <table>
             <thead>
@@ -171,11 +177,21 @@
       const text = await res.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-      if (!res.ok) throw new Error(data?.message || data?.error || res.statusText);
+      if (!res.ok) {
+        const msg = data?.message;
+        throw new Error(Array.isArray(msg) ? msg.join(', ') : (msg || data?.error || res.statusText));
+      }
       return data;
     }
 
-    function showApp(on) {
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
+
+    $('user').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
+    $('pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
       $('loginView').classList.toggle('hidden', on);
       $('appView').classList.toggle('hidden', !on);
       $('logoutBtn').classList.toggle('hidden', !on);
@@ -219,7 +235,8 @@
     }
 
     async function refreshStatus() {
-      const wa = await api('/admin/whatsapp/status');
+      const ready = await api('/admin/ready');
+      const wa = ready.whatsapp || {};
       $('waStatus').textContent = wa.connection || '—';
       if (wa.qrDataUrl) {
         $('qr').src = wa.qrDataUrl;
@@ -227,18 +244,25 @@
       } else {
         $('qr').classList.add('hidden');
       }
-      const dc = await api('/admin/discord/status');
-      $('dcStatus').textContent = dc.configured
+      const dc = ready.discord || {};
+      const db = ready.database ? 'DB ok' : 'DB offline';
+      $('dcStatus').textContent = (dc.configured
         ? (dc.ready ? 'Conectado ' + (dc.user || '') : 'Token ok, conectando…')
-        : 'DISCORD_TOKEN não configurado';
+        : 'DISCORD_TOKEN não configurado') + ' · ' + db + ' · allowlist ' + (ready.allowlist ?? 0);
     }
 
     $('pairBtn').onclick = async () => {
-      const data = await api('/admin/whatsapp/pair', {
-        method: 'POST',
-        body: JSON.stringify({ phoneNumber: $('pairPhone').value }),
-      });
-      $('pairCode').textContent = 'Código: ' + data.code;
+      $('pairCode').textContent = '';
+      try {
+        const data = await api('/admin/whatsapp/pair', {
+          method: 'POST',
+          body: JSON.stringify({ phoneNumber: $('pairPhone').value }),
+        });
+        $('pairCode').textContent = 'Código: ' + data.code;
+      } catch (e) {
+        $('pairCode').textContent = e.message;
+        $('pairCode').className = 'bad';
+      }
     };
 
     let catalog = [];
@@ -247,7 +271,7 @@
       renderChats();
       const sel = $('inboxJid');
       sel.innerHTML = catalog.filter((c) => c.enabled).map((c) =>
-        `<option value="${c.jid}">${c.name} (${c.jid})</option>`
+        `<option value="${esc(c.jid)}">${esc(c.name)} (${esc(c.jid)})</option>`
       ).join('');
     }
 
@@ -257,11 +281,11 @@
         (c.name + c.jid).toLowerCase().includes(q)
       ).map((c) => `
         <tr>
-          <td>${c.name}<div class="muted">${c.jid}</div></td>
-          <td><span class="pill">${c.kind}</span></td>
-          <td><input type="checkbox" data-jid="${c.jid}" class="enable" ${c.enabled ? 'checked' : ''} /></td>
-          <td class="muted">${c.discordChannelId || '—'}</td>
-          <td><input type="checkbox" data-jid="${c.jid}" class="tts" ${c.sendAsAudio ? 'checked' : ''} /></td>
+          <td>${esc(c.name)}<div class="muted">${esc(c.jid)}</div></td>
+          <td><span class="pill">${esc(c.kind)}</span></td>
+          <td><input type="checkbox" data-jid="${esc(c.jid)}" class="enable" ${c.enabled ? 'checked' : ''} /></td>
+          <td class="muted">${esc(c.discordChannelId || '—')}</td>
+          <td><input type="checkbox" data-jid="${esc(c.jid)}" class="tts" ${c.sendAsAudio ? 'checked' : ''} /></td>
         </tr>
       `).join('');
       document.querySelectorAll('.enable').forEach((el) => {
@@ -275,12 +299,33 @@
     $('chatFilter').oninput = renderChats;
 
     async function patchChat(jid, body) {
-      await api('/admin/chats/' + encodeURIComponent(jid), {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      });
-      await refreshChats();
+      $('chatErr').textContent = '';
+      try {
+        await api('/admin/chats/' + encodeURIComponent(jid), {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        });
+        await refreshChats();
+      } catch (e) {
+        $('chatErr').textContent = e.message;
+        await refreshChats();
+      }
     }
+
+    $('addChatBtn').onclick = async () => {
+      $('chatErr').textContent = '';
+      try {
+        await api('/admin/chats', {
+          method: 'POST',
+          body: JSON.stringify({ jid: $('newJid').value, name: $('newName').value, enabled: false }),
+        });
+        $('newJid').value = '';
+        $('newName').value = '';
+        await refreshChats();
+      } catch (e) {
+        $('chatErr').textContent = e.message;
+      }
+    };
 
     async function refreshLists() {
       const lists = await api('/admin/broadcasts');

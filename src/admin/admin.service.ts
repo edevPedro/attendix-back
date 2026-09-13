@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CaptureService } from 'src/capture/capture.service';
@@ -29,12 +30,45 @@ export class AdminService {
     return this.discord.status();
   }
 
+  async ready() {
+    return {
+      database: await this.prisma.ping(),
+      whatsapp: this.whatsapp.status,
+      discord: this.discord.status(),
+      allowlist: this.capture.enabledCount(),
+    };
+  }
+
   async pair(phoneNumber: string) {
     if (!phoneNumber) {
       throw new BadRequestException('phoneNumber é obrigatório');
     }
-    const code = await this.whatsapp.requestPairingCode(phoneNumber);
-    return { code };
+    try {
+      const code = await this.whatsapp.requestPairingCode(phoneNumber);
+      return { code };
+    } catch (err) {
+      throw new ServiceUnavailableException((err as Error).message);
+    }
+  }
+
+  async addChat(body: { jid: string; name?: string; enabled?: boolean; sendAsAudio?: boolean }) {
+    if (!body.jid?.trim()) {
+      throw new BadRequestException('jid é obrigatório');
+    }
+    const jid = normalizeJid(body.jid.trim());
+    if (chatKind(jid) === 'other') {
+      throw new BadRequestException('JID inválido. Use número@s.whatsapp.net ou grupo@g.us');
+    }
+    await this.prisma.chatCatalog.upsert({
+      where: { jid },
+      create: { jid, name: body.name?.trim() || jid, kind: chatKind(jid) },
+      update: { name: body.name?.trim() || undefined },
+    });
+    return this.patchChat(jid, {
+      enabled: body.enabled ?? false,
+      name: body.name,
+      sendAsAudio: body.sendAsAudio,
+    });
   }
 
   catalog() {

@@ -6,7 +6,7 @@ import { WhatsappService, WaInbound } from 'src/whatsapp/whatsapp.service';
 import { SpeechService } from 'src/speech/speech.service';
 import { inboundPrefix } from 'src/capture/capture.policy';
 import { extFromMime, saveMedia } from 'src/common/media-store';
-import { chatKind, normalizeJid } from 'src/whatsapp/jid';
+import { normalizeJid } from 'src/whatsapp/jid';
 import { ChatGateway } from 'src/chat/chat.gateway';
 
 @Injectable()
@@ -38,6 +38,25 @@ export class BridgeService implements OnModuleInit {
     if (!this.capture.isAllowed(msg.jid)) {
       return;
     }
+    const existing = msg.waMessageId
+      ? await this.prisma.message.findUnique({ where: { waMessageId: msg.waMessageId } })
+      : null;
+    if (existing) {
+      return;
+    }
+    if (msg.fromMe) {
+      const recentOut = await this.prisma.message.findFirst({
+        where: {
+          jid: msg.jid,
+          direction: 'out',
+          createdAt: { gte: new Date(Date.now() - 30_000) },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (recentOut && (recentOut.body === msg.text || recentOut.waMessageId?.endsWith(msg.waMessageId.split('_').pop() || ''))) {
+        return;
+      }
+    }
     let transcript: string | null = null;
     if (msg.type === 'audio' && msg.mediaPath) {
       transcript = await this.speech.transcribe(msg.mediaPath);
@@ -63,19 +82,39 @@ export class BridgeService implements OnModuleInit {
       });
     }
 
-    await this.prisma.message.create({
-      data: {
-        jid: msg.jid,
-        direction: msg.fromMe ? 'out' : 'in',
-        type: msg.type,
-        body: msg.text || transcript,
-        mediaPath: msg.mediaPath,
-        transcript,
-        discordMessageId,
-        waMessageId: msg.waMessageId,
-        rawJson: msg.raw ?? undefined,
-      },
-    });
+    if (msg.waMessageId) {
+      await this.prisma.message.upsert({
+        where: { waMessageId: msg.waMessageId },
+        create: {
+          jid: msg.jid,
+          direction: msg.fromMe ? 'out' : 'in',
+          type: msg.type,
+          body: msg.text || transcript,
+          mediaPath: msg.mediaPath,
+          transcript,
+          discordMessageId,
+          waMessageId: msg.waMessageId,
+          rawJson: msg.raw ?? undefined,
+        },
+        update: {
+          discordMessageId: discordMessageId || undefined,
+          transcript: transcript || undefined,
+        },
+      });
+    } else {
+      await this.prisma.message.create({
+        data: {
+          jid: msg.jid,
+          direction: msg.fromMe ? 'out' : 'in',
+          type: msg.type,
+          body: msg.text || transcript,
+          mediaPath: msg.mediaPath,
+          transcript,
+          discordMessageId,
+          rawJson: msg.raw ?? undefined,
+        },
+      });
+    }
 
     this.chatGateway.emitToFront({
       from: msg.jid,
@@ -133,25 +172,21 @@ export class BridgeService implements OnModuleInit {
     sendAsAudio: boolean,
     discordMessageId?: string,
   ) {
-    let lastWaId: string | undefined;
     const images = files.filter((f) => f.mime?.startsWith('image/'));
     const audios = files.filter((f) => f.mime?.startsWith('audio/'));
     const others = files.filter((f) => !f.mime?.startsWith('image/') && !f.mime?.startsWith('audio/'));
 
     for (const img of images) {
       const sent = await this.whatsapp.sendImage(jid, img.buffer, text || undefined);
-      lastWaId = sent?.key?.id;
-      await this.storeOut(jid, 'image', text, discordMessageId, lastWaId);
+      await this.storeOut(jid, 'image', text, discordMessageId, sent);
     }
     for (const audio of audios) {
       const sent = await this.whatsapp.sendAudio(jid, audio.buffer, true);
-      lastWaId = sent?.key?.id;
-      await this.storeOut(jid, 'audio', text, discordMessageId, lastWaId);
+      await this.storeOut(jid, 'audio', text, discordMessageId, sent);
     }
     for (const file of others) {
       const sent = await this.whatsapp.sendFile(jid, file.buffer, file.name, file.mime);
-      lastWaId = sent?.key?.id;
-      await this.storeOut(jid, 'file', text, discordMessageId, lastWaId);
+      await this.storeOut(jid, 'file', text, discordMessageId, sent);
     }
 
     if (!files.length && text) {
@@ -159,14 +194,12 @@ export class BridgeService implements OnModuleInit {
         const ogg = await this.speech.synthesize(text);
         if (ogg) {
           const sent = await this.whatsapp.sendAudio(jid, ogg, true);
-          lastWaId = sent?.key?.id;
-          await this.storeOut(jid, 'audio', text, discordMessageId, lastWaId);
+          await this.storeOut(jid, 'audio', text, discordMessageId, sent);
           return;
         }
       }
       const sent = await this.whatsapp.sendText(jid, text);
-      lastWaId = sent?.key?.id;
-      await this.storeOut(jid, 'text', text, discordMessageId, lastWaId);
+      await this.storeOut(jid, 'text', text, discordMessageId, sent);
     }
   }
 
@@ -174,9 +207,12 @@ export class BridgeService implements OnModuleInit {
     jid: string,
     type: string,
     body: string,
-    discordMessageId?: string,
-    waId?: string,
+    discordMessageId: string | undefined,
+    sent?: { key?: { id?: string; remoteJid?: string | null; participant?: string | null } },
   ) {
+    const waMessageId = sent?.key?.id
+      ? `${normalizeJid(sent.key.remoteJid || jid)}_${sent.key.participant || ''}_${sent.key.id}`
+      : undefined;
     await this.prisma.message.create({
       data: {
         jid,
@@ -184,12 +220,8 @@ export class BridgeService implements OnModuleInit {
         type,
         body: body || null,
         discordMessageId,
-        waMessageId: waId ? `${jid}__${waId}` : undefined,
+        waMessageId,
       },
     });
-  }
-
-  kind(jid: string) {
-    return chatKind(jid);
   }
 }

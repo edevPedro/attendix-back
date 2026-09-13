@@ -63,7 +63,7 @@ export class CaptureService {
       this.prisma.allowedChat.findMany(),
     ]);
     const byJid = new Map(allowed.map((row) => [row.jid, row]));
-    return catalog.map((chat) => {
+    const rows = catalog.map((chat) => {
       const allow = byJid.get(chat.jid);
       return {
         jid: chat.jid,
@@ -75,6 +75,19 @@ export class CaptureService {
         sendAsAudio: allow?.sendAsAudio === true,
       };
     });
+    for (const allow of allowed) {
+      if (rows.some((row) => row.jid === allow.jid)) continue;
+      rows.unshift({
+        jid: allow.jid,
+        name: allow.name,
+        kind: allow.kind,
+        lastSeen: allow.updatedAt,
+        enabled: allow.enabled,
+        discordChannelId: allow.discordChannelId ?? null,
+        sendAsAudio: allow.sendAsAudio,
+      });
+    }
+    return rows;
   }
 
   async listBindings() {

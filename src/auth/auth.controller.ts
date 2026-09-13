@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import { ADMIN_COOKIE, AdminGuard, adminToken, tokensMatch } from './admin.guard';
@@ -11,6 +11,7 @@ export class AuthController {
   ) {}
 
   @Post('login')
+  @HttpCode(200)
   login(
     @Body() body: { username?: string; password?: string },
     @Res({ passthrough: true }) res: Response,
@@ -30,6 +31,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @HttpCode(200)
   logout(@Res({ passthrough: true }) res: Response) {
     res.clearCookie(ADMIN_COOKIE);
     return { ok: true };

@@ -78,20 +78,31 @@ export class WhatsappService extends EventEmitter implements OnModuleInit {
       auth: state,
       markOnlineOnConnect: false,
       syncFullHistory: false,
-      emitOwnEvents: true,
-      browser: Browsers?.ubuntu?.('Chrome') || ['Attendix', 'Chrome', '1.0'],
+      emitOwnEvents: false,
+      browser: Browsers.ubuntu('Chrome'),
       shouldSyncHistoryMessage: (msg: { syncType?: number | null }) =>
         MINIMAL_HISTORY.has(Number(msg?.syncType ?? -1)),
       getMessage: async (key: any) => {
-        const id = waMessageId(key);
-        const stored = await this.prisma.message.findUnique({ where: { waMessageId: id } });
-        if (stored?.rawJson && typeof stored.rawJson === 'object') {
-          return stored.rawJson as any;
+        const id = waMessageId({
+          remoteJid: key?.remoteJid,
+          id: key?.id,
+          participant: key?.participant,
+        });
+        const stored =
+          (await this.prisma.message.findUnique({ where: { waMessageId: id } })) ||
+          (await this.prisma.message.findUnique({
+            where: { waMessageId: `${normalizeJid(key?.remoteJid)}__${key?.id}` },
+          }));
+        if (stored?.rawJson && typeof stored.rawJson === 'object' && !Array.isArray(stored.rawJson)) {
+          const raw = stored.rawJson as Record<string, unknown>;
+          if (raw.conversation || raw.extendedTextMessage || raw.imageMessage || raw.audioMessage) {
+            return raw as any;
+          }
         }
         if (stored?.body) {
           return { conversation: stored.body };
         }
-        return { conversation: '' };
+        return { conversation: stored?.body || ' ' };
       },
       cachedGroupMetadata: async (jid: string) => this.groupCache.get(jid),
     });
@@ -143,12 +154,21 @@ export class WhatsappService extends EventEmitter implements OnModuleInit {
         this.logger.warn(`WhatsApp fechou (code=${code}). Relogar=${!loggedOut}`);
         this.status.me = null;
         this.emit('connection', this.status);
-        if (!loggedOut && !this.reconnecting) {
+        if (loggedOut) {
+          this.logger.warn('Sessão WhatsApp inválida/desconectada. Gerando novo QR…');
+          try {
+            const { rm } = await import('fs/promises');
+            await rm(join(process.cwd(), 'auth_info_baileys'), { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!this.reconnecting) {
           this.reconnecting = true;
           setTimeout(() => {
             this.reconnecting = false;
             this.connect().catch((err) => this.logger.error(err));
-          }, 3000);
+          }, loggedOut ? 1000 : 3000);
         }
       }
     });
@@ -157,7 +177,11 @@ export class WhatsappService extends EventEmitter implements OnModuleInit {
       for (const contact of contacts || []) {
         const jid = normalizeJid(contact.id || contact.jid);
         if (shouldIgnoreJid(jid)) continue;
-        await this.capture.upsertCatalog(jid, contact.notify || contact.name || contact.verifiedName);
+        try {
+          await this.capture.upsertCatalog(jid, contact.notify || contact.name || contact.verifiedName);
+        } catch (err) {
+          this.logger.warn(`catalog contact: ${(err as Error).message}`);
+        }
       }
     });
 
@@ -203,7 +227,7 @@ export class WhatsappService extends EventEmitter implements OnModuleInit {
     if (shouldIgnoreJid(remote) || !m?.message) {
       return;
     }
-    await this.capture.upsertCatalog(remote, m.pushName);
+    await this.capture.upsertCatalog(remote, m.pushName).catch(() => undefined);
     if (!this.capture.isAllowed(remote)) {
       return;
     }
@@ -249,6 +273,10 @@ export class WhatsappService extends EventEmitter implements OnModuleInit {
     }
 
     this.emit('inbound', inbound);
+  }
+
+  isOpen() {
+    return this.status.connection === 'open' && Boolean(this.sock);
   }
 
   async requestPairingCode(phoneNumber: string): Promise<string> {
