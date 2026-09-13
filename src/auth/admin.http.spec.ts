@@ -54,6 +54,9 @@ describe('admin auth http', () => {
       .send({ username: 'admin', password: 'pw' })
       .expect(200);
     const cookie = login.headers['set-cookie'][0];
+    const raw = cookie.split('=')[1].split(';')[0];
+    expect([...sessions.keys()][0]).not.toBe(raw);
+    expect([...sessions.keys()][0]).toHaveLength(64);
     await request(app.getHttpServer()).get('/admin/session').set('Cookie', cookie).expect(200);
     await request(app.getHttpServer()).post('/admin/logout').set('Cookie', cookie).expect(200);
     await request(app.getHttpServer()).get('/admin/session').set('Cookie', cookie).expect(401);

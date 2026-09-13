@@ -5,7 +5,7 @@ import { DiscordService, DiscordInbound } from 'src/discord/discord.service';
 import { WhatsappService, WaInbound } from 'src/whatsapp/whatsapp.service';
 import { SpeechService } from 'src/speech/speech.service';
 import { inboundPrefix, resolveFanoutJids, routedChannelId } from 'src/capture/capture.policy';
-import { extFromMime, saveMedia } from 'src/common/media-store';
+import { extFromMime, mediaAbs, saveMedia } from 'src/common/media-store';
 import { normalizeJid } from 'src/whatsapp/jid';
 import { outboundProto, waMessageId } from 'src/whatsapp/message-extract';
 import { MessageStore } from 'src/gateway/message-store';
@@ -68,7 +68,7 @@ export class BridgeService implements OnModuleInit {
 
     let transcript: string | null = null;
     if (msg.type === 'audio' && msg.mediaPath) {
-      transcript = await this.speech.transcribe(msg.mediaPath);
+      transcript = await this.speech.transcribe(mediaAbs(msg.mediaPath));
     }
 
     const body = [prefix.trim(), msg.text, transcript ? `_Transcrição:_ ${transcript}` : null]

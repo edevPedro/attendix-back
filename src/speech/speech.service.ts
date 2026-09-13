@@ -15,19 +15,29 @@ export class SpeechService implements OnModuleInit {
   private loading: Promise<void> | null = null;
   private queue: Promise<void> = Promise.resolve();
 
+  private pending = 0;
+  private readonly maxQueue = 6;
+
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit() {
     mkdir(TMP, { recursive: true }).catch(() => undefined);
   }
 
-  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  private enqueue<T>(fn: () => Promise<T>): Promise<T | null> {
+    if (this.pending >= this.maxQueue) {
+      this.logger.warn('Fila de speech cheia — pulando');
+      return Promise.resolve(null);
+    }
+    this.pending += 1;
     const run = this.queue.then(fn, fn);
     this.queue = run.then(
       () => undefined,
       () => undefined,
     );
-    return run;
+    return run.finally(() => {
+      this.pending -= 1;
+    });
   }
 
   async transcribe(inputPath: string): Promise<string | null> {

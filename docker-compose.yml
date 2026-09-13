@@ -4,12 +4,48 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: attendix
-      POSTGRES_PASSWORD: attendix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-attendix}
       POSTGRES_DB: attendix
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - attendix_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U attendix"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRESQL_URL: postgresql://attendix:${POSTGRES_PASSWORD:-attendix}@postgres:5432/attendix
+      PORT: 3300
+    ports:
+      - "3300:3300"
+    volumes:
+      - attendix_wa:/app/auth_info_baileys
+      - attendix_storage:/app/storage
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3300/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
 
 volumes:
   attendix_pg:
+  attendix_wa:
+  attendix_storage:

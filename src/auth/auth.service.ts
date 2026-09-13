@@ -1,12 +1,15 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
-
-const WEEK_MS = 7 * 24 * 3600 * 1000;
+import { WEEK_MS } from './cookie';
 
 export function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest();
+}
+
+export function sha256Hex(value: string): string {
+  return sha256(value).toString('hex');
 }
 
 export function hashesMatch(a: string, b: string): boolean {
@@ -14,19 +17,11 @@ export function hashesMatch(a: string, b: string): boolean {
 }
 
 @Injectable()
-export class AuthService implements OnModuleInit {
-  private readonly logger = new Logger(AuthService.name);
-
+export class AuthService {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
   ) {}
-
-  onModuleInit() {
-    if (!this.config.get('ADMIN_PASSWORD')) {
-      this.logger.error('ADMIN_PASSWORD é obrigatório');
-    }
-  }
 
   adminUser(): string {
     return this.config.get<string>('ADMIN_USER') || 'admin';
@@ -43,7 +38,7 @@ export class AuthService implements OnModuleInit {
     const token = randomBytes(32).toString('hex');
     await this.prisma.adminSession.create({
       data: {
-        token,
+        token: sha256Hex(token),
         username: this.adminUser(),
         expiresAt: new Date(Date.now() + WEEK_MS),
       },
@@ -53,10 +48,11 @@ export class AuthService implements OnModuleInit {
 
   async sessionUser(token?: string | null): Promise<string | null> {
     if (!token) return null;
-    const row = await this.prisma.adminSession.findUnique({ where: { token } });
+    const hashed = sha256Hex(token);
+    const row = await this.prisma.adminSession.findUnique({ where: { token: hashed } });
     if (!row) return null;
     if (row.expiresAt.getTime() < Date.now()) {
-      await this.prisma.adminSession.delete({ where: { token } }).catch(() => undefined);
+      await this.prisma.adminSession.delete({ where: { token: hashed } }).catch(() => undefined);
       return null;
     }
     return row.username;
@@ -64,7 +60,7 @@ export class AuthService implements OnModuleInit {
 
   async revoke(token?: string | null) {
     if (token) {
-      await this.prisma.adminSession.delete({ where: { token } }).catch(() => undefined);
+      await this.prisma.adminSession.delete({ where: { token: sha256Hex(token) } }).catch(() => undefined);
     }
   }
 }

@@ -37,6 +37,7 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
   private reconnectTimer: NodeJS.Timeout | null = null;
   private socketGen = 0;
   private shuttingDown = false;
+  private reconnectDelay = 3000;
   private groupCache = new Map<string, any>();
   status: {
     connection: string;
@@ -155,6 +156,7 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
       }
       if (connection) this.status.connection = connection;
       if (connection === 'open') {
+        this.reconnectDelay = 3000;
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
@@ -173,8 +175,10 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
         if (gen !== this.socketGen) return;
         if (loggedOut) {
           await rm(AUTH_DIR, { recursive: true, force: true }).catch(() => undefined);
+          this.reconnectDelay = 1000;
         }
-        this.scheduleReconnect(loggedOut ? 1000 : 3000);
+        this.scheduleReconnect(this.reconnectDelay);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 60_000);
       }
     });
 
@@ -274,6 +278,17 @@ export class WhatsappService extends EventEmitter implements OnModuleInit, OnMod
 
   isOpen() {
     return this.status.connection === 'open' && Boolean(this.sock);
+  }
+
+  publicStatus() {
+    return {
+      connection: this.status.connection,
+      qrDataUrl: this.status.qrDataUrl,
+      hasQr: Boolean(this.status.qrDataUrl),
+      me: this.status.me
+        ? { id: this.status.me.id || this.status.me.lid || null, name: this.status.me.name || null }
+        : null,
+    };
   }
 
   async requestPairingCode(phoneNumber: string): Promise<string> {

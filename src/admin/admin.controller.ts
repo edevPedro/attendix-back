@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   UseGuards,
@@ -74,13 +75,18 @@ export class AdminController {
   }
 
   @Post('broadcasts/:id/members')
-  addMember(@Param('id') id: string, @Body() body: { jid: string }) {
-    return this.admin.addBroadcastMember(Number(id), body.jid);
+  addMember(@Param('id', ParseIntPipe) id: number, @Body() body: { jid: string }) {
+    return this.admin.addBroadcastMember(id, body.jid);
   }
 
   @Delete('broadcasts/:id/members/:jid')
-  removeMember(@Param('id') id: string, @Param('jid') jid: string) {
-    return this.admin.removeBroadcastMember(Number(id), decodeURIComponent(jid));
+  removeMember(@Param('id', ParseIntPipe) id: number, @Param('jid') jid: string) {
+    return this.admin.removeBroadcastMember(id, decodeURIComponent(jid));
+  }
+
+  @Delete('broadcasts/:id')
+  deleteBroadcast(@Param('id', ParseIntPipe) id: number) {
+    return this.admin.deleteBroadcast(id);
   }
 
   @Get('inbox/:jid')

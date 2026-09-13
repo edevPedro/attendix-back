@@ -336,8 +336,17 @@
           <strong>${esc(l.name)}</strong>
           <div class="muted">canal ${esc(l.discordChannelId)}</div>
           <p>${(l.chats || []).map((m) => esc(m.name ? m.name + ' · ' + m.jid : m.jid)).join('<br>') || 'sem membros'}</p>
+          <button type="button" class="ghost danger deleteList" data-id="${esc(l.id)}">Remover lista</button>
         </div>
       `).join('') || '<p class="muted">Nenhuma lista</p>';
+      document.querySelectorAll('.deleteList').forEach((el) => {
+        el.onclick = async () => {
+          if (!confirm('Remover esta lista? Os chats voltam a 1:1 (captura permanece).')) return;
+          await api('/admin/broadcasts/' + el.dataset.id, { method: 'DELETE' });
+          await refreshLists();
+          await refreshChats();
+        };
+      });
     }
 
     $('createListBtn').onclick = async () => {

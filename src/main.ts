@@ -1,12 +1,27 @@
+import cookieParser from 'cookie-parser';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
-import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+import { assertRuntimeConfig, trustProxy } from './common/env';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  assertRuntimeConfig();
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: true,
+  });
+  app.useBodyParser('json', { limit: '1mb' });
+  app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
+  if (trustProxy()) app.set('trust proxy', 1);
+  app.enableShutdownHooks();
   app.use(cookieParser());
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    next();
+  });
   const origin = process.env.CORS_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean);
   app.enableCors({
     origin: origin?.length ? origin : false,
@@ -17,4 +32,8 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   console.log(`Gateway em http://localhost:${port}`);
 }
-bootstrap();
+
+bootstrap().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

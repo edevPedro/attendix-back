@@ -12,6 +12,7 @@ import {
 import { createReadStream } from 'fs';
 import { basename } from 'path';
 import { sanitizeChannelName } from 'src/whatsapp/jid';
+import { mediaAbs } from 'src/common/media-store';
 
 const ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
 const ATTACHMENT_TIMEOUT_MS = 20_000;
@@ -28,6 +29,7 @@ export class DiscordService extends EventEmitter implements OnModuleInit, OnModu
   private readonly logger = new Logger(DiscordService.name);
   private client: Client | null = null;
   ready = false;
+  private shuttingDown = false;
 
   constructor(private readonly config: ConfigService) {
     super();
@@ -62,6 +64,9 @@ export class DiscordService extends EventEmitter implements OnModuleInit, OnModu
     this.client.on(Events.ShardDisconnect, () => {
       this.ready = false;
     });
+    this.client.on(Events.Error, (err) => {
+      this.logger.error('Discord client error', err);
+    });
     this.client.on(Events.MessageCreate, async (message) => {
       if (!message.guild || message.author.bot) return;
       if (this.client?.user && message.author.id === this.client.user.id) return;
@@ -77,15 +82,26 @@ export class DiscordService extends EventEmitter implements OnModuleInit, OnModu
       };
       this.emit('inbound', inbound);
     });
-    try {
-      await this.client.login(token);
-    } catch (err) {
-      this.ready = false;
-      this.logger.error('Falha ao autenticar no Discord', err as Error);
+    void this.loginWithRetry(token);
+  }
+
+  private async loginWithRetry(token: string) {
+    let delay = 2000;
+    while (!this.shuttingDown) {
+      try {
+        await this.client!.login(token);
+        return;
+      } catch (err) {
+        this.ready = false;
+        this.logger.error(`Falha ao autenticar no Discord, retry ${delay}ms`, err as Error);
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(delay * 2, 60_000);
+      }
     }
   }
 
   async onModuleDestroy() {
+    this.shuttingDown = true;
     this.ready = false;
     if (this.client) {
       await this.client.destroy().catch(() => undefined);
@@ -113,8 +129,8 @@ export class DiscordService extends EventEmitter implements OnModuleInit, OnModu
     const channel = await this.getTextChannel(opts.channelId);
     if (!channel) return null;
     const files = (opts.files || []).map((file) => ({
-      attachment: createReadStream(file),
-      name: basename(file),
+      attachment: createReadStream(mediaAbs(file)),
+      name: basename(mediaAbs(file)),
     }));
     const sent = await channel.send({
       content: opts.body?.slice(0, 2000) || (files.length ? undefined : '(mídia)'),

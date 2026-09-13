@@ -10,6 +10,7 @@ import { SpeechModule } from './speech/speech.module';
 import { BridgeModule } from './bridge/bridge.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
+import { MediaRetentionService } from './common/media-retention.service';
 
 @Module({
   imports: [
@@ -24,6 +25,6 @@ import { AdminModule } from './admin/admin.module';
     AdminModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, MediaRetentionService],
 })
 export class AppModule {}

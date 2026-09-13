@@ -1,9 +1,8 @@
 import { Controller, Get, NotFoundException, Param, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { createReadStream, existsSync } from 'fs';
-import { join } from 'path';
 import { AdminGuard } from 'src/auth/admin.guard';
-import { MEDIA_DIR } from 'src/common/media-store';
+import { mediaAbs } from 'src/common/media-store';
 
 @Controller('admin/media')
 @UseGuards(AdminGuard)
@@ -13,7 +12,7 @@ export class MediaController {
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
       throw new NotFoundException();
     }
-    const full = join(MEDIA_DIR, filename);
+    const full = mediaAbs(filename);
     if (!existsSync(full)) {
       throw new NotFoundException();
     }

@@ -10,6 +10,7 @@ import { CaptureService } from 'src/capture/capture.service';
 import { DiscordService } from 'src/discord/discord.service';
 import { WhatsappService } from 'src/whatsapp/whatsapp.service';
 import { BridgeService } from 'src/bridge/bridge.service';
+import { asBool } from 'src/common/bool';
 import { chatKind, normalizeJid } from 'src/whatsapp/jid';
 
 @Injectable()
@@ -23,7 +24,7 @@ export class AdminService {
   ) {}
 
   whatsappStatus() {
-    return this.whatsapp.status;
+    return this.whatsapp.publicStatus();
   }
 
   discordStatus() {
@@ -33,18 +34,19 @@ export class AdminService {
   async ready() {
     return {
       database: await this.prisma.ping(),
-      whatsapp: this.whatsapp.status,
+      whatsapp: this.whatsapp.publicStatus(),
       discord: this.discord.status(),
       allowlist: this.capture.enabledCount(),
     };
   }
 
   async pair(phoneNumber: string) {
-    if (!phoneNumber) {
-      throw new BadRequestException('phoneNumber é obrigatório');
+    const digits = phoneNumber.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 15) {
+      throw new BadRequestException('phoneNumber deve ser DDI+número (10–15 dígitos)');
     }
     try {
-      const code = await this.whatsapp.requestPairingCode(phoneNumber);
+      const code = await this.whatsapp.requestPairingCode(digits);
       return { code };
     } catch (err) {
       throw new ServiceUnavailableException((err as Error).message);
@@ -60,9 +62,9 @@ export class AdminService {
       throw new BadRequestException('JID inválido. Use número@s.whatsapp.net ou grupo@g.us');
     }
     return this.patchChat(jid, {
-      enabled: body.enabled ?? false,
+      enabled: asBool(body.enabled, false),
       name: body.name,
-      sendAsAudio: body.sendAsAudio,
+      sendAsAudio: asBool(body.sendAsAudio),
     });
   }
 
@@ -84,7 +86,8 @@ export class AdminService {
     const existing = await this.capture.getChat(jid);
     const name = body.name?.trim() || existing?.name || jid;
     const kind = existing?.kind || chatKind(jid);
-    const enabled = body.enabled ?? existing?.enabled ?? false;
+    const enabled = asBool(body.enabled, existing?.enabled ?? false) ?? false;
+    const sendAsAudio = asBool(body.sendAsAudio);
     const listId =
       body.broadcastListId === undefined ? existing?.listId ?? null : body.broadcastListId;
 
@@ -98,7 +101,7 @@ export class AdminService {
         enabled,
         listId,
         discordChannelId: null,
-        sendAsAudio: body.sendAsAudio,
+        sendAsAudio,
       });
     }
 
@@ -116,13 +119,19 @@ export class AdminService {
       enabled,
       listId: null,
       discordChannelId,
-      sendAsAudio: body.sendAsAudio,
+      sendAsAudio,
     });
   }
 
   async createBroadcast(body: { name: string; jids?: string[]; sendAsAudio?: boolean }) {
     if (!body.name?.trim()) {
       throw new BadRequestException('name é obrigatório');
+    }
+    const jids = (body.jids || []).map((j) => normalizeJid(j)).filter(Boolean);
+    for (const jid of jids) {
+      if (chatKind(jid) === 'other') {
+        throw new BadRequestException(`JID inválido: ${jid}`);
+      }
     }
     if (!this.discord.ready) {
       throw new BadRequestException('Discord precisa estar conectado para criar o canal da lista');
@@ -132,10 +141,10 @@ export class AdminService {
       data: {
         name: body.name.trim(),
         discordChannelId: channelId,
-        sendAsAudio: body.sendAsAudio ?? false,
+        sendAsAudio: asBool(body.sendAsAudio, false) ?? false,
       },
     });
-    for (const raw of body.jids || []) {
+    for (const raw of jids) {
       await this.addBroadcastMember(list.id, raw);
     }
     return this.getBroadcast(list.id);
@@ -198,6 +207,16 @@ export class AdminService {
       where: { jid },
       orderBy: { createdAt: 'asc' },
       take: 500,
+      select: {
+        id: true,
+        jid: true,
+        direction: true,
+        type: true,
+        body: true,
+        mediaPath: true,
+        transcript: true,
+        createdAt: true,
+      },
     });
   }
 
@@ -205,7 +224,28 @@ export class AdminService {
     if (!message.trim()) {
       throw new BadRequestException('message é obrigatório');
     }
-    await this.bridge.sendFromFront({ to: jidRaw, message });
+    if (!this.whatsapp.isOpen()) {
+      throw new ServiceUnavailableException('WhatsApp não está conectado');
+    }
+    try {
+      await this.bridge.sendFromFront({ to: jidRaw, message });
+      return { ok: true };
+    } catch (err) {
+      const text = (err as Error).message || '';
+      if (text.includes('allowlist')) throw new ForbiddenException(text);
+      throw new ServiceUnavailableException(text || 'Falha ao enviar');
+    }
+  }
+
+  async deleteBroadcast(id: number) {
+    const list = await this.prisma.broadcastList.findUnique({ where: { id } });
+    if (!list) throw new NotFoundException('Lista não encontrada');
+    await this.prisma.waChat.updateMany({
+      where: { listId: id },
+      data: { listId: null, discordChannelId: null },
+    });
+    await this.prisma.broadcastList.delete({ where: { id } });
+    await this.capture.refresh();
     return { ok: true };
   }
 }
