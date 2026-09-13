@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { CaptureService } from 'src/capture/capture.service';
 import { DiscordService, DiscordInbound } from 'src/discord/discord.service';
 import { WhatsappService, WaInbound } from 'src/whatsapp/whatsapp.service';
@@ -189,7 +190,7 @@ export class BridgeService implements OnModuleInit {
       discordMessageId,
       mediaPath,
       waMessageId: sent?.key ? waMessageId(sent.key) || undefined : undefined,
-      rawJson: outboundProto(type, body || ''),
+      rawJson: outboundProto(type, body || '') as Prisma.InputJsonValue,
     });
   }
 }
