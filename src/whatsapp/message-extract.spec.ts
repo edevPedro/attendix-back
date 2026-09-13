@@ -26,7 +26,11 @@ describe('message-extract', () => {
     expect(isHistoryUpsert('notify')).toBe(false);
   });
 
-  it('builds wa message id', () => {
+  it('builds wa message id with normalized jids', () => {
+    expect(waMessageId({ remoteJid: 'a@s.whatsapp.net' })).toBe('');
     expect(waMessageId({ remoteJid: 'a', id: '1', participant: 'p' })).toBe('a_p_1');
+    expect(
+      waMessageId({ remoteJid: '5511999:12@s.whatsapp.net', id: 'abc', participant: '5511888:1@s.whatsapp.net' }),
+    ).toBe('5511999@s.whatsapp.net_5511888@s.whatsapp.net_abc');
   });
 });

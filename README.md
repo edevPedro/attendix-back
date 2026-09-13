@@ -14,7 +14,7 @@ pnpm prisma:migrate
 pnpm start:dev
 ```
 
-Abra http://localhost:3300 — login com `ADMIN_USER` / `ADMIN_PASSWORD`.
+Abra http://localhost:3300 — login com `ADMIN_USER` / `ADMIN_PASSWORD`. Logout invalida a sessão no servidor. O front é servido na mesma origem (CORS fechado por padrão).
 
 ## Discord
 

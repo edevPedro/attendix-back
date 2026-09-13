@@ -1,49 +1,21 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { AuthService } from './auth.service';
 
 export const ADMIN_COOKIE = 'attendix_admin';
 
-export function adminToken(user: string, secret: string): string {
-  return createHmac('sha256', secret).update(user).digest('hex');
-}
-
-export function tokensMatch(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) {
-    return false;
-  }
-  return timingSafeEqual(left, right);
-}
-
 @Injectable()
 export class AdminGuard implements CanActivate {
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly auth: AuthService) {}
 
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
-    const expected = this.expectedToken();
     const cookie = req.cookies?.[ADMIN_COOKIE];
     const header = String(req.headers?.authorization || '').replace(/^Bearer\s+/i, '');
-    const provided = cookie || header;
-    if (!provided || !tokensMatch(provided, expected)) {
+    const user = this.auth.sessionUser(cookie || header || null);
+    if (!user) {
       throw new UnauthorizedException('Admin authentication required');
     }
+    req.adminUser = user;
     return true;
-  }
-
-  expectedToken(): string {
-    const user = this.config.get<string>('ADMIN_USER') || 'admin';
-    const secret =
-      this.config.get<string>('ADMIN_SECRET') ||
-      this.config.get<string>('ADMIN_PASSWORD') ||
-      'changeme';
-    return adminToken(user, secret);
   }
 }

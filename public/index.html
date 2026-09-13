@@ -333,27 +333,31 @@
       const lists = await api('/admin/broadcasts');
       $('listsWrap').innerHTML = lists.map((l) => `
         <div class="card">
-          <strong>${l.name}</strong>
-          <div class="muted">canal ${l.discordChannelId}</div>
-          <p>${(l.members || []).map((m) => m.jid).join('<br>') || 'sem membros'}</p>
+          <strong>${esc(l.name)}</strong>
+          <div class="muted">canal ${esc(l.discordChannelId)}</div>
+          <p>${(l.members || []).map((m) => esc(m.jid)).join('<br>') || 'sem membros'}</p>
         </div>
       `).join('') || '<p class="muted">Nenhuma lista</p>';
     }
 
     $('createListBtn').onclick = async () => {
-      const jids = $('listJids').value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
-      await api('/admin/broadcasts', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: $('listName').value,
-          jids,
-          sendAsAudio: $('listTts').checked,
-        }),
-      });
-      $('listName').value = '';
-      $('listJids').value = '';
-      await refreshLists();
-      await refreshChats();
+      try {
+        const jids = $('listJids').value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+        await api('/admin/broadcasts', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: $('listName').value,
+            jids,
+            sendAsAudio: $('listTts').checked,
+          }),
+        });
+        $('listName').value = '';
+        $('listJids').value = '';
+        await refreshLists();
+        await refreshChats();
+      } catch (e) {
+        alert(e.message);
+      }
     };
 
     $('loadInbox').onclick = async () => {

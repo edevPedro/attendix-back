@@ -1,4 +1,12 @@
+import { normalizeJid } from './jid';
+
 export type ExtractedType = 'text' | 'image' | 'audio' | 'file' | 'unknown';
+
+export type WaKey = {
+  remoteJid?: string | null;
+  id?: string | null;
+  participant?: string | null;
+};
 
 export function unwrapMessage(message: Record<string, any> | null | undefined): Record<string, any> | null {
   if (!message) {
@@ -56,6 +64,10 @@ export function isHistoryUpsert(type?: string): boolean {
   return type === 'append' || type === 'prepend';
 }
 
-export function waMessageId(key: { remoteJid?: string | null; id?: string | null; participant?: string | null }): string {
-  return [key.remoteJid || '', key.participant || '', key.id || ''].join('_');
+/** Canonical id: normalizedRemote_normalizedParticipant_id */
+export function waMessageId(key: WaKey): string {
+  if (!key.id) {
+    return '';
+  }
+  return [normalizeJid(key.remoteJid), normalizeJid(key.participant || '') || '', key.id].join('_');
 }

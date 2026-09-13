@@ -7,7 +7,11 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.use(cookieParser());
-  app.enableCors({ origin: true, credentials: true });
+  const origin = process.env.CORS_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean);
+  app.enableCors({
+    origin: origin?.length ? origin : false,
+    credentials: true,
+  });
   app.useStaticAssets(join(process.cwd(), 'public'), { index: 'index.html' });
   const port = Number(process.env.PORT ?? 3300);
   await app.listen(port, '0.0.0.0');

@@ -25,6 +25,7 @@ export class CaptureService {
     } catch (err) {
       this.logger.warn(`Allowlist não carregada (DB?): ${(err as Error).message}`);
       this.enabled = new Set();
+      setTimeout(() => this.refresh().catch(() => undefined), 15_000);
     }
   }
 
@@ -48,11 +49,10 @@ export class CaptureService {
     const display = name?.trim() || jid;
     await this.prisma.chatCatalog.upsert({
       where: { jid },
-      create: { jid, name: display, kind, lastSeen: new Date() },
+      create: { jid, name: display === jid ? jid : display, kind, lastSeen: new Date() },
       update: {
-        name: display,
-        kind,
         lastSeen: new Date(),
+        ...(name?.trim() && name.trim() !== jid ? { name: name.trim(), kind } : { kind }),
       },
     });
   }
@@ -145,12 +145,12 @@ export class CaptureService {
     const list = await this.prisma.broadcastList.findUnique({
       where: { discordChannelId: channelId },
     });
-    if (list?.sendAsAudio) {
-      return true;
+    if (list) {
+      return list.sendAsAudio;
     }
     const chats = await this.prisma.allowedChat.findMany({
-      where: { enabled: true, discordChannelId: channelId, sendAsAudio: true },
+      where: { enabled: true, discordChannelId: channelId },
     });
-    return chats.length > 0;
+    return chats.length === 1 ? chats[0].sendAsAudio : false;
   }
 }

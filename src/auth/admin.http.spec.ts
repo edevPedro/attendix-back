@@ -37,12 +37,14 @@ describe('admin auth http', () => {
     await request(app.getHttpServer()).get('/admin/session').expect(401);
   });
 
-  it('login then session', async () => {
+  it('login then session then logout invalidates', async () => {
     const login = await request(app.getHttpServer())
       .post('/admin/login')
       .send({ username: 'admin', password: 'pw' })
       .expect(200);
     const cookie = login.headers['set-cookie'][0];
     await request(app.getHttpServer()).get('/admin/session').set('Cookie', cookie).expect(200);
+    await request(app.getHttpServer()).post('/admin/logout').set('Cookie', cookie).expect(200);
+    await request(app.getHttpServer()).get('/admin/session').set('Cookie', cookie).expect(401);
   });
 });

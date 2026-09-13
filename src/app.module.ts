@@ -2,9 +2,6 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
-import { UserModule } from './user/user.module';
-import { AttendentModule } from './attendent/attendent.module';
-import { ChatModule } from './chat/chat.module';
 import { ConfigModule } from '@nestjs/config';
 import { CaptureModule } from './capture/capture.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
@@ -25,9 +22,6 @@ import { AdminModule } from './admin/admin.module';
     SpeechModule,
     BridgeModule,
     AdminModule,
-    AttendentModule,
-    UserModule,
-    ChatModule,
   ],
   controllers: [AppController],
   providers: [AppService],

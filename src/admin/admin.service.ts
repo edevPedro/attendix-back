@@ -169,14 +169,29 @@ export class AdminService {
 
   async removeBroadcastMember(listId: number, jidRaw: string) {
     const jid = normalizeJid(jidRaw);
+    const list = await this.prisma.broadcastList.findUnique({ where: { id: listId } });
     await this.prisma.broadcastMember.deleteMany({ where: { listId, jid } });
-    await this.capture.setAllowed({
-      jid,
-      name: jid,
-      kind: chatKind(jid),
-      enabled: false,
-      discordChannelId: null,
-    });
+    const remaining = await this.prisma.broadcastMember.findMany({ where: { jid } });
+    const current = await this.capture.getAllowed(jid);
+    if (current) {
+      let nextChannel: string | null = current.discordChannelId;
+      if (remaining.length > 0) {
+        const other = await this.prisma.broadcastList.findUnique({ where: { id: remaining[0].listId } });
+        nextChannel = other?.discordChannelId ?? null;
+      } else if (list && current.discordChannelId === list.discordChannelId) {
+        nextChannel = null;
+      }
+      if (nextChannel !== current.discordChannelId) {
+        await this.capture.setAllowed({
+          jid,
+          name: current.name,
+          kind: current.kind,
+          enabled: current.enabled,
+          discordChannelId: nextChannel,
+          sendAsAudio: current.sendAsAudio,
+        });
+      }
+    }
     return this.getBroadcast(listId);
   }
 

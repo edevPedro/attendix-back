@@ -41,10 +41,13 @@ export class SpeechService implements OnModuleInit {
         await this.ffmpeg(inputPath, wav, ['-ar', '16000', '-ac', '1']);
         const audio = await this.readWavFloats(wav);
         await unlink(wav).catch(() => undefined);
-        const result = await this.transcriber(audio, {
-          chunk_length_s: 30,
-          language: this.config.get('WHISPER_LANGUAGE') || 'portuguese',
-        });
+        const result = await Promise.race([
+          this.transcriber(audio, {
+            chunk_length_s: 30,
+            language: this.config.get('WHISPER_LANGUAGE') || 'portuguese',
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('whisper timeout')), 45_000)),
+        ]);
         const text = typeof result === 'string' ? result : result?.text;
         return text?.trim() || null;
       } catch (err) {
@@ -99,6 +102,7 @@ export class SpeechService implements OnModuleInit {
       } catch (err) {
         this.logger.warn(`Não foi possível carregar Whisper: ${(err as Error).message}`);
         this.transcriber = null;
+        this.loading = null;
       }
     })();
     await this.loading;
@@ -108,10 +112,14 @@ export class SpeechService implements OnModuleInit {
     return this.run('ffmpeg', ['-y', '-i', input, ...extra, output]);
   }
 
-  private run(cmd: string, args: string[], stdin?: string): Promise<void> {
+  private run(cmd: string, args: string[], stdin?: string, timeoutMs = 20_000): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = spawn(cmd, args);
       let stderr = '';
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error(`${cmd} timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
       child.stderr.on('data', (d) => {
         stderr += d.toString();
       });
@@ -119,8 +127,12 @@ export class SpeechService implements OnModuleInit {
         child.stdin.write(stdin);
         child.stdin.end();
       }
-      child.on('error', reject);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
       child.on('close', (code) => {
+        clearTimeout(timer);
         if (code === 0) resolve();
         else reject(new Error(`${cmd} exited ${code}: ${stderr.slice(-400)}`));
       });

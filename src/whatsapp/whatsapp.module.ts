@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from 'src/prisma/prisma.module';
 import { CaptureModule } from 'src/capture/capture.module';
+import { GatewayStoreModule } from 'src/gateway/gateway-store.module';
 import { WhatsappService } from './whatsapp.service';
 
 @Module({
-  imports: [PrismaModule, CaptureModule],
+  imports: [CaptureModule, GatewayStoreModule],
   providers: [WhatsappService],
   exports: [WhatsappService],
 })
